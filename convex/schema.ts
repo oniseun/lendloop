@@ -84,5 +84,7 @@ export default defineSchema({
   webhookReceipts: defineTable({
     signature: v.string(),
     receivedAt: v.number(),
-  }).index('by_signature', ['signature']),
+  })
+    .index('by_signature', ['signature'])
+    .index('by_received', ['receivedAt']),
 });
