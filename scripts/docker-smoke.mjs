@@ -52,6 +52,18 @@ await expectOk(`${CONVEX}/version`);
 await expectOk(`${N8N}/healthz`);
 await expectOk(`${MAILPIT}/readyz`);
 
+step('n8n owner account (created on first boot)');
+const login = await fetch(`${N8N}/rest/login`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    emailOrLdapLoginId: process.env.N8N_OWNER_EMAIL ?? 'admin@lendloop.local',
+    password: process.env.N8N_OWNER_PASSWORD ?? 'LendLoop-local-1',
+  }),
+});
+if (login.status !== 200) fail(`n8n owner login returned ${login.status}`);
+console.info('  n8n login -> 200');
+
 step('Signed request event -> n8n webhook -> Mailpit');
 const secret = compose('exec', '-T', 'n8n', 'cat', '/shared/n8n.env')
   .split('\n')
