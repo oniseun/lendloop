@@ -121,27 +121,53 @@ No server secret lives in Next.js. Next only has public config plus the Clerk se
  any n8n failure ─► n8n "Error handler" ─► log + alert email
 ```
 
+Same layering I use in FLIQ (NestJS backend + React web): one module per domain, controllers stay thin, services own the use cases, repositories own the queries, DTOs shape what goes in and out. Convex has no classes or DI, so each layer is a plain TypeScript module, but the boundaries are the same.
+
+| FLIQ backend (NestJS)                      | LendLoop (Convex)                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------ |
+| `modules/<x>/controllers/*.controller.ts`  | `convex/<x>.ts` – exported query/mutation = route; args + auth only      |
+| `@UseGuards(AuthGuard)`, `@Roles(...)`     | `userQuery` / `userMutation` / `adminQuery` (`convex/lib/functions.ts`)  |
+| `modules/<x>/services/*.service.ts`        | `convex/modules/<x>/<x>.service.ts`                                      |
+| `modules/<x>/repositories/*.repository.ts` | `convex/modules/<x>/<x>.repository.ts` – the only place `ctx.db` is used |
+| `dtos/request` + `dtos/response`           | `convex/modules/<x>/<x>.dto.ts` – Convex validators in, `to…Dto()` out   |
+| entities / enums                           | `convex/schema.ts`, `convex/lib/constants.ts`                            |
+| `ResponseFormat<T>`                        | `convex/lib/http.ts` (same `{ success, message, data }` envelope)        |
+| providers (email, SMS lambdas)             | `convex/modules/automation/n8n.gateway.ts`                               |
+| `modules/common`                           | `convex/lib` (permissions, signature, dates, errors, logger)             |
+
 ```
 convex/
-  schema.ts            tables + indexes
-  users.ts tools.ts loans.ts admin.ts   public API (the "controllers")
-  automation.ts        internal: outbox delivery, overdue query, reminder write-back
-  http.ts              signed HTTP endpoints for n8n
-  model/               domain logic shared by the functions (the "services")
-  lib/                 pure helpers: permissions, signature, dates, validators, errors, logger
+  schema.ts                       tables + indexes
+  users.ts tools.ts loans.ts      controllers: validate args, resolve the user, call a service
+  admin.ts automation.ts          (automation.ts is internal: scheduler, crons and http.ts only)
+  http.ts                         HTTP controllers for n8n: size limit, signature guard, parse, call
+  modules/
+    users/    user.repository  user.service  user.dto
+    tools/    tool.repository  tool.service  tool.dto
+    loans/    loan.repository  loan.service  loan.dto  loan.rules (pure domain rules)
+    automation/
+              automation.repository  automation.service  automation.dto
+              n8n.gateway (outbound HTTP)  webhook.guard (inbound HMAC check)
+    admin/    admin.service (composes the other services, owns no table)
+  lib/                            common: permissions policy, signing, dates, validators, errors, logger
+  e2e.ts                          test fixtures, gated by E2E_FIXTURES=true (see Testing)
   seed.ts crons.ts
 src/
-  app/                 routes only, each renders a view
-  modules/<feature>/   components, views, dto (same layout as my other frontends)
+  app/                            routes only, each renders a view
+  modules/<feature>/              same layout as fliq-web-frontend:
+    api/                          Convex function references (the "apiClient" of each module)
+    hooks/                        useQuery / useMutation wrappers the views call
+    components/ views/ dto/ context/
 n8n/
-  workflows/           exported workflow JSON (no secrets)
-  docker/bootstrap.sh  credential + workflow import on boot
+  workflows/                      exported workflow JSON (no secrets)
+  docker/bootstrap.sh             credential + workflow import on boot
 tests/
-  unit/                permissions, signing, dates, payloads, n8n Code nodes
-  convex/              real Convex functions via convex-test
+  unit/                           permissions, loan rules, signing, dates, payloads, n8n Code nodes
+  convex/                         real Convex functions via convex-test
+e2e/                              Playwright, real Clerk sessions, local Convex backend
 ```
 
-Same split I use elsewhere: thin entry points, logic in services, pure policy in one place. In Convex terms the exported functions validate args and resolve the user, `model/` does the work, `lib/permissions.ts` decides who can do what.
+A request flows `view → hook → api ref → convex/loans.ts (controller) → loan.service → loan.repository / loan.rules`, and every state change queues its notification through `automation.service` in the same transaction.
 
 ### Roles and rules
 
@@ -185,23 +211,66 @@ Also: server-side length limits and trimming on all text, date validation (no pa
 ## 🧪 Testing
 
 ```bash
-npm test          # vitest
+npm test          # vitest: unit + Convex function tests
 npm run lint
 npm run typecheck
 npm run build
+npm run e2e       # Playwright (see below)
 ```
 
-67 tests:
+71 unit and integration tests:
 
 - **Permissions** (pure policy) and **RBAC through the real Convex functions**: anonymous writes, editing or deleting someone else's tool, approving or returning as borrower, stranger or admin, admin-only functions, admin removal, and what each list returns (no owner data publicly, no emails when signed in).
-- **Loan rules**: double-booking, clashing requests declined on approval, duplicate requests, state transitions.
+- **Loan rules**: double-booking, clashing requests declined on approval, duplicate requests, state transitions, plus unit tests for `loan.rules.ts`.
 - **Signing**: a known HMAC vector, tampering, wrong secret, wrong route, stale and future timestamps, malformed headers.
 - **Automation**: signed minimal payloads, retry then failure then admin retry, overdue endpoint auth and shape, single-winner reminder claims, idempotent write-backs, exact-replay handling, paging past handled loans.
 - **n8n workflows**: the JavaScript inside the exported Code nodes is executed and checked against the Convex signer and verifier, so the two sides can't drift. A further test asserts the exports carry no secrets and route failures to the error workflow.
 
-I also ran the whole loop locally against a local Convex backend, n8n 2.45.7 and Mailpit: request → signed webhook → email to the lender → delivery marked sent; overdue run → claim → reminder email → write-back recorded; a second run sends nothing; an unreachable Convex URL triggers the error workflow.
+### End-to-end (Playwright)
 
-Not covered by automated tests: the Clerk sign-in UI itself (tests use simulated Convex identities) and browser-level E2E.
+9 browser tests in `e2e/`, run against the Next.js app, a local Convex backend and a **real Clerk dev instance**. No auth bypass: each test gets a genuine Clerk session through `@clerk/testing` (testing token + sign-in ticket for a `+clerk_test` user), and Convex verifies the real JWT.
+
+- signed-out visitors see the public board and are redirected away from app pages
+- lender lists two tools; own listings can't be borrowed
+- borrower requests both; lender sees the note; the n8n email lands in Mailpit (when `E2E_MAILPIT_URL` is set)
+- lender approves one, declines the other; borrower sees both; the board shows "On loan"
+- borrower gets no lender actions
+- lender marks returned; the tool is available again
+- overdue: a loan due two days ago is listed for n8n, the first claim wins, a second claim the same day is refused, the write-back shows "Reminder sent" and the loan drops off the list, and a late "failed" can't overwrite "sent"
+- admin area visible to admins only
+
+Run locally:
+
+```bash
+npx convex dev                 # local backend (leave running)
+npm run e2e:setup              # Clerk JWT template + e2e users, Convex env (idempotent)
+npm run e2e                    # starts `next dev` if nothing is on :3000
+```
+
+`e2e:setup` uses `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` from the environment or `.env.local`. With no keys it creates a Clerk **keyless** dev app (what `@clerk/nextjs` does on first run, no account needed) and writes the keys to `.env.local`. For the overdue spec also set `E2E_N8N_TO_CONVEX_SECRET` to the deployment's `N8N_TO_CONVEX_SECRET`; for the email check set `E2E_MAILPIT_URL=http://localhost:8025` with n8n and Mailpit running.
+
+The overdue spec needs a loan in the past, which the UI rightly refuses, so it calls `convex/e2e.ts:createOverdueLoan`. That is an **internal** mutation (no browser can call it; only `npx convex run` with the deployment's admin key) and it throws unless the deployment has `E2E_FIXTURES=true`, which `e2e:setup` sets on local deployments only. Never set it in production.
+
+**CI:** the `e2e` job in `.github/workflows/ci.yml` starts a local Convex backend, runs `e2e:setup`, builds and runs the suite. If the repo secrets `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are set it uses that Clerk instance; otherwise it creates a throwaway keyless Clerk app for the run. n8n and Mailpit aren't started in CI, so the email assertion is skipped there; it runs locally.
+
+**Screenshots** in `docs/screenshots` are produced by `e2e/docs-screenshots.spec.ts` (skipped unless `E2E_SCREENSHOTS=1`) against a freshly seeded deployment with n8n and Mailpit running; the overdue email comes from a real n8n run (`OVERDUE_RUN_CMD="docker compose exec -T n8n n8n execute --id lendloopOverdueW"`).
+
+I also ran the whole loop by hand against a local Convex backend, n8n 2.45.7 and Mailpit: request → signed webhook → email to the lender → delivery marked sent; overdue run → claim → reminder email → write-back recorded; a second run sends nothing; an unreachable Convex URL triggers the error workflow.
+
+## 📸 Screenshots
+
+|                                                                                                                                            |                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| ![Public board](docs/screenshots/01-public-board-signed-out.png) Signed-out landing page with the public board (names and categories only) | ![Board](docs/screenshots/04-borrower-board.png) The board for a signed-in borrower: availability, Trusted Lender badge |
+| ![List a tool](docs/screenshots/02-lender-list-a-tool.png) Lender listing a tool                                                           | ![My listings](docs/screenshots/03-lender-my-listings.png) Lender's listings                                            |
+| ![Request](docs/screenshots/05-borrower-request-dialog.png) Borrower requesting dates with a note                                          | ![My requests](docs/screenshots/06-borrower-my-requests-pending.png) Borrower's pending requests                        |
+| ![Incoming](docs/screenshots/07-lender-incoming-request.png) Lender's incoming requests, with n8n notification status                      | ![Email to lender](docs/screenshots/08-email-new-request-to-lender.png) The n8n email to the lender (Mailpit)           |
+| ![Approved and declined](docs/screenshots/09-lender-approved-and-declined.png) One approved, one declined                                  | ![Approved email](docs/screenshots/10-email-approved-to-borrower.png) Approval email to the borrower                    |
+| ![On loan](docs/screenshots/11-board-drill-on-loan.png) The board shows the drill as On loan                                               | ![Overdue](docs/screenshots/12-borrower-overdue-with-reminder.png) Overdue loan with the reminder recorded by n8n       |
+| ![Reminder email](docs/screenshots/13-email-overdue-reminder.png) Overdue reminder email                                                   | ![Mailpit inbox](docs/screenshots/14-mailpit-inbox.png) Every email the flow sent                                       |
+| ![Returned](docs/screenshots/15-lender-marked-returned.png) Lender marks the drill returned                                                | ![Admin](docs/screenshots/16-admin-all-loans.png) Admin: all loans with automation activity                             |
+| ![n8n request workflow](docs/screenshots/17-n8n-request-notification-workflow.png) n8n: request notification workflow                      | ![n8n overdue workflow](docs/screenshots/18-n8n-overdue-reminder-workflow.png) n8n: daily overdue reminders             |
+| ![n8n error workflow](docs/screenshots/19-n8n-error-workflow.png) n8n: error handler                                                       | ![n8n executions](docs/screenshots/20-n8n-executions.png) n8n executions, all successful                                |
 
 ## ⚖️ Decisions and Trade-offs
 
