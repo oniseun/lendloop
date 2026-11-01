@@ -11,6 +11,7 @@
 import type * as admin from "../admin.js";
 import type * as automation from "../automation.js";
 import type * as crons from "../crons.js";
+import type * as e2e from "../e2e.js";
 import type * as http from "../http.js";
 import type * as lib_admins from "../lib/admins.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -41,6 +42,7 @@ declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   automation: typeof automation;
   crons: typeof crons;
+  e2e: typeof e2e;
   http: typeof http;
   "lib/admins": typeof lib_admins;
   "lib/auth": typeof lib_auth;
