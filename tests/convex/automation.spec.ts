@@ -6,7 +6,7 @@ import {
   TIMESTAMP_HEADER,
   verifySignature,
 } from '../../convex/lib/signature';
-import { listOverdueLoans } from '../../convex/model/automation';
+import { listOverdueLoans } from '../../convex/modules/automation/automation.service';
 import { createTest, signIn, type TestConvex } from './setup';
 
 const INBOUND_SECRET = 'n8n-to-convex-test';

@@ -9,7 +9,10 @@ import {
 } from '../../convex/lib/dates';
 import { buildRequestEvent, RECIPIENT_FOR } from '../../convex/lib/events';
 import { parseReminderInput } from '../../convex/lib/reminderInput';
-import { availabilityFor, isOverdue } from '../../convex/model/availability';
+import {
+  availabilityFor,
+  isOverdue,
+} from '../../convex/modules/loans/loan.rules';
 
 describe('dates', () => {
   it('validates real calendar dates only', () => {
