@@ -4,7 +4,7 @@ Borrow what you need. Lend what you don't.
 
 A tool-lending board for a neighbourhood. Neighbours list tools, request to borrow them for a date range, and the owner approves, declines and marks them returned. n8n handles the notifications and the daily overdue reminders.
 
-Built for the Fluence take-home. Next.js (App Router) + Clerk + Convex + n8n, all TypeScript.
+Built with Next.js (App Router) + Clerk + Convex + n8n, all TypeScript.
 
 ## 🛠 Tech Stack
 
@@ -275,9 +275,9 @@ I also ran the whole loop by hand against a local Convex backend, n8n 2.45.7 and
 ## ⚖️ Decisions and Trade-offs
 
 - **Roles in Convex, not Clerk metadata.** One source of truth, enforced where the data is, revocable instantly. Cost: admin bootstrap is via `ADMIN_EMAILS` or the CLI.
-- **User sync on sign-in (`users.store`) rather than Clerk webhooks.** Fewer moving parts for a take-home. Name and email changes sync on the next sign-in, and deleting a user in Clerk doesn't remove them here (see below).
+- **User sync on sign-in (`users.store`) rather than Clerk webhooks.** Fewer moving parts. Name and email changes sync on the next sign-in, and deleting a user in Clerk doesn't remove them here (see below).
 - **HMAC secrets in n8n env, not n8n credentials.** Code nodes can't read credentials, so the HMAC keys come from `$env` (`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`). SMTP, which a node can use directly, is a proper credential.
-- **Business scheduling in n8n, as the brief asks.** Convex crons only prune replay receipts.
+- **Business scheduling lives in n8n.** Convex crons only prune replay receipts.
 - **Availability computed on read.** Fine at neighbourhood scale (a query per tool). At more scale I'd denormalise the active loan onto the tool and paginate.
 - **Dates are UTC calendar days.** Good enough for one neighbourhood.
 - **Only the lender marks a loan returned.** They're the one who knows it's back.

@@ -2,7 +2,7 @@ import { cronJobs } from 'convex/server';
 import { internal } from './_generated/api';
 
 // Housekeeping only. Business scheduling (overdue reminders) is owned by
-// n8n, as the brief asks.
+// n8n.
 const crons = cronJobs();
 
 crons.interval(

@@ -10,7 +10,7 @@ const describe = (event: LoanActivity) => {
   return `${what} sent`;
 };
 
-// Bonus from the brief: recent automation activity on each loan.
+// Recent automation activity on each loan.
 export function AutomationActivity({ events }: { events: LoanActivity[] }) {
   if (events.length === 0) return null;
   return (
