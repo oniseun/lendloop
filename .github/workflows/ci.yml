@@ -85,3 +85,36 @@ jobs:
           name: playwright-report
           path: playwright-report
           retention-days: 7
+
+  docker:
+    # The one-command setup: `docker compose up` from a fresh clone with
+    # the default .env (no Clerk keys, so convex-init creates a Clerk
+    # keyless app), then a smoke test across every service.
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: cp .env.example .env
+      - name: docker compose up
+        run: docker compose up -d --build
+      - name: Wait for the app
+        run: scripts/docker-wait.sh
+      - run: docker compose ps -a
+      - name: Smoke test
+        run: node scripts/docker-smoke.mjs
+      - name: Logs
+        if: always()
+        run: docker compose logs --no-color --timestamps
+      - name: Restart reuses keys and data
+        run: |
+          docker compose down
+          docker compose up -d
+          scripts/docker-wait.sh
+          node scripts/docker-smoke.mjs --quick
+      - name: Logs after restart
+        if: failure()
+        run: docker compose logs --no-color --timestamps
