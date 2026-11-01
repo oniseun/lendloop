@@ -13,3 +13,4 @@ n8n/.data
 test-results
 playwright-report
 .clerk
+.env.clerk

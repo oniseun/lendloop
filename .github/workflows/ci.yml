@@ -26,3 +26,62 @@ jobs:
           NEXT_PUBLIC_CONVEX_URL: https://placeholder.convex.cloud
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
           CLERK_SECRET_KEY: sk_test_placeholder
+
+  e2e:
+    # Playwright against a local Convex backend and a real Clerk dev
+    # instance. Uses the CLERK_PUBLISHABLE_KEY / CLERK_SECRET_KEY repo
+    # secrets when they exist; otherwise scripts/e2e-setup.mjs creates a
+    # throwaway Clerk keyless app for the run. n8n and Mailpit are not
+    # started here, so the email assertion is skipped.
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CONVEX_AGENT_MODE: anonymous
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Start local Convex backend
+        run: |
+          npx convex dev --tail-logs disable > convex.log 2>&1 &
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:3210/version > /dev/null && break
+            sleep 2
+          done
+          grep -q NEXT_PUBLIC_CONVEX_URL .env.local
+      - name: Configure Clerk and Convex for e2e
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+        run: |
+          if [ -n "$CLERK_SECRET_KEY" ]; then
+            printf 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=%s\nCLERK_SECRET_KEY=%s\n' \
+              "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" "$CLERK_SECRET_KEY" >> .env.local
+          fi
+          secret="$(openssl rand -hex 32)"
+          npx convex env set N8N_TO_CONVEX_SECRET "$secret"
+          echo "E2E_N8N_TO_CONVEX_SECRET=$secret" >> .env.local
+          node scripts/e2e-setup.mjs
+          # convex dev retries the push once auth is configured.
+          for i in $(seq 1 60); do
+            grep -q 'Convex functions ready' convex.log && break
+            sleep 2
+          done
+          grep -q 'Convex functions ready' convex.log || (cat convex.log; exit 1)
+      - run: npm run build
+      - run: npx playwright test
+        env:
+          CI: 'true'
+      - if: failure()
+        run: cat convex.log
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
