@@ -13,7 +13,7 @@ import { emailFor } from './support/users';
 //
 //   E2E_SCREENSHOTS=1 \
 //   N8N_URL=http://localhost:5678 N8N_EMAIL=... N8N_PASSWORD=... \
-//   OVERDUE_RUN_CMD="docker compose exec -T n8n n8n execute --id lendloopOverdueW" \
+//   OVERDUE_RUN_CMD="docker compose -f docker-compose.n8n.yml exec -T n8n n8n execute --id lendloopOverdueW" \
 //   npx playwright test e2e/docs-screenshots.spec.ts
 
 const OUT = process.env.SCREENSHOT_DIR ?? 'docs/screenshots';

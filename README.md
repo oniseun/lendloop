@@ -17,25 +17,69 @@ Built with Next.js (App Router) + Clerk + Convex + n8n, all TypeScript.
 
 ## 🚀 Getting Started
 
-### Prerequisites
+### Quick start (Docker)
 
-- Node 22 (`.nvmrc`)
-- Docker (for n8n + Mailpit)
-- A free Clerk development instance
+Needs Docker with Compose v2. Nothing else: no Node, no Clerk account.
 
-### 1. Install
+```bash
+cp .env.example .env    # optional: add your Clerk keys, see below
+docker compose up -d --build    # or: npm run docker:up
+```
+
+The first start takes a few minutes (it builds the app). Then:
+
+| What             | Where                                                                        |
+| ---------------- | ---------------------------------------------------------------------------- |
+| App              | http://localhost:3000                                                        |
+| n8n              | http://localhost:5678 (`N8N_OWNER_EMAIL` / `N8N_OWNER_PASSWORD` from `.env`) |
+| Mailpit (emails) | http://localhost:8025                                                        |
+| Convex dashboard | http://localhost:6791 (admin key: see below)                                 |
+| Convex API       | http://localhost:3210 (HTTP actions on :3211)                                |
+
+What `docker compose up` does, in order:
+
+1. **convex-backend** (self-hosted Convex) and **mailpit** start and report healthy.
+2. **convex-admin-key** derives the Convex admin key; **convex-init** then
+   - uses the Clerk keys from `.env`, or, if they're empty, creates a Clerk **keyless** dev app (its claim link is in `docker compose logs convex-init`) and adds the `convex` JWT template,
+   - generates the two webhook signing secrets,
+   - sets the Convex env (`CLERK_JWT_ISSUER_DOMAIN`, `ADMIN_EMAILS`, `N8N_REQUEST_WEBHOOK_URL`, secrets), deploys the functions and seeds the demo data.
+3. **web** builds and serves Next.js; **n8n** imports the SMTP credential and the three workflows, publishes them and creates the owner account. No clicks needed.
+
+Keys, secrets and data live in Docker volumes and are reused by the next `up`. `docker compose down -v` resets everything.
+
+**Clerk:** leaving both keys empty is fine for trying it out. To use your own Clerk app, set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` (both) in `.env` before the first `up`; the `convex` JWT template is created for you. Add your email to `ADMIN_EMAILS` to get the admin role on first sign-in.
+
+Useful commands:
+
+```bash
+docker compose logs -f web n8n                       # follow logs
+docker compose exec convex-backend ./generate_admin_key.sh   # dashboard admin key
+docker compose exec n8n sh -c 'set -a && . /shared/n8n.env && N8N_PORT=5679 N8N_RUNNERS_BROKER_PORT=5680 n8n execute --id lendloopOverdueW'   # run the overdue reminders now
+node scripts/docker-smoke.mjs                        # the CI smoke test
+docker compose down                                  # stop (add -v to wipe data)
+```
+
+CI runs exactly this (`docker` job): `cp .env.example .env`, `docker compose up -d --build`, then `scripts/docker-smoke.mjs` checks the app, Convex, n8n and Mailpit, sends a signed request event through the n8n webhook and runs the overdue workflow, and confirms both emails arrive in Mailpit.
+
+### Manual setup (without Docker for the app)
+
+For working on the code with hot reload: Next.js and Convex run on your machine, n8n + Mailpit in Docker.
+
+Prerequisites: Node 22 (`.nvmrc`), Docker (for n8n + Mailpit), a free Clerk development instance.
+
+#### 1. Install
 
 ```bash
 npm run setup   # copies .env.example to .env.local and installs
 ```
 
-### 2. Clerk
+#### 2. Clerk
 
 1. Create an application in Clerk.
 2. In the Clerk dashboard, open **Integrations → Convex** and activate it. That creates the `convex` JWT template Convex expects. Copy the **Frontend API URL** shown there.
 3. Put the publishable and secret keys in `.env.local`.
 
-### 3. Convex
+#### 3. Convex
 
 ```bash
 npx convex dev
@@ -56,19 +100,19 @@ npm run seed
 
 > A Convex **cloud** deployment can't call `localhost:5678`. Either use the local Convex deployment (simplest), or expose n8n (n8n Cloud or a tunnel) and use that URL for `N8N_REQUEST_WEBHOOK_URL`.
 
-### 4. n8n
+#### 4. n8n
 
 ```bash
 cp n8n/.env.example n8n/.env
 # fill in N8N_ENCRYPTION_KEY and the two LENDLOOP_*_SECRET values
 # (same values as CONVEX_TO_N8N_SECRET / N8N_TO_CONVEX_SECRET above:
 #  npx convex env get CONVEX_TO_N8N_SECRET)
-docker compose up -d
+npm run n8n:up   # docker compose -f docker-compose.n8n.yml up -d
 ```
 
 On boot the container imports the SMTP credential (built from env into n8n's encrypted store), imports the three workflows from `n8n/workflows` and publishes them. Open http://localhost:5678 and create the owner account. Emails land in Mailpit at http://localhost:8025.
 
-### 5. Run the app
+#### 5. Run the app
 
 ```bash
 npm run dev
@@ -86,6 +130,8 @@ npx convex run users:setRole '{"email":"you@example.com","role":"admin"}'
 - **Overdue reminders:** open _LendLoop – Overdue reminders_ in n8n and run it with the manual trigger (it also runs daily at 09:00). The seeded overdue drill gets a reminder in Mailpit and the loan shows "Reminder sent". Run it again and nothing is sent twice.
 
 ## 🔑 Environment Variables
+
+With Docker, `.env` only holds the optional values in `.env.example` (Clerk keys, `ADMIN_EMAILS`, n8n login, notify channel); everything else below is generated and wired up by `convex-init`. The table describes the manual setup.
 
 | Where        | Variable                                                         | Purpose                                                                                |
 | ------------ | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -160,7 +206,10 @@ src/
     components/ views/ dto/ context/
 n8n/
   workflows/                      exported workflow JSON (no secrets)
-  docker/bootstrap.sh             credential + workflow import on boot
+  docker/bootstrap.sh             credential + workflow import, owner account, on boot
+docker-compose.yml  Dockerfile    the full stack (see Quick start)
+docker/                           convex-init.mjs (keys, env, deploy, seed), web-start.sh
+docker-compose.n8n.yml            n8n + Mailpit only, for the manual setup
 tests/
   unit/                           permissions, loan rules, signing, dates, payloads, n8n Code nodes
   convex/                         real Convex functions via convex-test
@@ -249,11 +298,13 @@ npm run e2e                    # starts `next dev` if nothing is on :3000
 
 `e2e:setup` uses `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` from the environment or `.env.local`. With no keys it creates a Clerk **keyless** dev app (what `@clerk/nextjs` does on first run, no account needed) and writes the keys to `.env.local`. For the overdue spec also set `E2E_N8N_TO_CONVEX_SECRET` to the deployment's `N8N_TO_CONVEX_SECRET`; for the email check set `E2E_MAILPIT_URL=http://localhost:8025` with n8n and Mailpit running.
 
+**Against the Docker stack:** the same suite passes against `docker compose up` (9 passed, email check included). Point the tools at the self-hosted backend instead of `convex dev`: `CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210`, `CONVEX_SELF_HOSTED_ADMIN_KEY` from `docker compose exec convex-backend ./generate_admin_key.sh`, the Clerk keys from `/shared/app.env` in the `shared` volume, `E2E_N8N_TO_CONVEX_SECRET` from `/shared/n8n.env`, `E2E_BASE_URL=http://localhost:3000` and `E2E_MAILPIT_URL=http://localhost:8025`; then `npm run e2e:setup && npm run e2e`.
+
 The overdue spec needs a loan in the past, which the UI rightly refuses, so it calls `convex/e2e.ts:createOverdueLoan`. That is an **internal** mutation (no browser can call it; only `npx convex run` with the deployment's admin key) and it throws unless the deployment has `E2E_FIXTURES=true`, which `e2e:setup` sets on local deployments only. Never set it in production.
 
 **CI:** the `e2e` job in `.github/workflows/ci.yml` starts a local Convex backend, runs `e2e:setup`, builds and runs the suite. If the repo secrets `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are set it uses that Clerk instance; otherwise it creates a throwaway keyless Clerk app for the run. n8n and Mailpit aren't started in CI, so the email assertion is skipped there; it runs locally.
 
-**Screenshots** in `docs/screenshots` are produced by `e2e/docs-screenshots.spec.ts` (skipped unless `E2E_SCREENSHOTS=1`) against a freshly seeded deployment with n8n and Mailpit running; the overdue email comes from a real n8n run (`OVERDUE_RUN_CMD="docker compose exec -T n8n n8n execute --id lendloopOverdueW"`).
+**Screenshots** in `docs/screenshots` are produced by `e2e/docs-screenshots.spec.ts` (skipped unless `E2E_SCREENSHOTS=1`) against a freshly seeded deployment with n8n and Mailpit running; the overdue email comes from a real n8n run (`OVERDUE_RUN_CMD="docker compose -f docker-compose.n8n.yml exec -T n8n n8n execute --id lendloopOverdueW"`).
 
 I also ran the whole loop by hand against a local Convex backend, n8n 2.45.7 and Mailpit: request → signed webhook → email to the lender → delivery marked sent; overdue run → claim → reminder email → write-back recorded; a second run sends nothing; an unreachable Convex URL triggers the error workflow.
 
