@@ -2,3 +2,5 @@ node_modules
 .next
 convex/_generated
 package-lock.json
+n8n/workflows
+.github

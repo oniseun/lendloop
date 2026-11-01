@@ -7,7 +7,12 @@ const config = [
   ...nextTs,
   prettier,
   {
-    ignores: ['.next/**', 'node_modules/**', 'convex/_generated/**', 'next-env.d.ts'],
+    ignores: [
+      '.next/**',
+      'node_modules/**',
+      'convex/_generated/**',
+      'next-env.d.ts',
+    ],
   },
   {
     rules: {
