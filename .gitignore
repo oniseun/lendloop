@@ -10,3 +10,6 @@ next-env.d.ts
 .DS_Store
 n8n/.data
 .convex
+test-results
+playwright-report
+.clerk
