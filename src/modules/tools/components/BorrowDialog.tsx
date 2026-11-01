@@ -8,13 +8,12 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
-import { useMutation } from 'convex/react';
 import { useState, type FormEvent } from 'react';
-import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { LOAN_MESSAGE_MAX } from '@convex/lib/constants';
 import { useRunMutation } from '@/modules/common/hooks/useRunMutation';
 import { todayInputValue } from '@/modules/common/utils/dates';
+import { useRequestLoan } from '@/modules/loans/hooks';
 
 interface BorrowDialogProps {
   tool: { _id: Id<'tools'>; name: string } | null;
@@ -22,7 +21,7 @@ interface BorrowDialogProps {
 }
 
 export function BorrowDialog({ tool, onClose }: BorrowDialogProps) {
-  const requestLoan = useMutation(api.loans.request);
+  const requestLoan = useRequestLoan();
   const { run, pending, error } = useRunMutation();
   const today = todayInputValue();
   const [startDate, setStartDate] = useState(today);

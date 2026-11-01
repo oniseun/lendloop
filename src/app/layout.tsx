@@ -3,7 +3,7 @@ import Container from '@mui/material/Container';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { AppHeader } from '@/modules/common/components/AppHeader';
-import { CurrentUserProvider } from '@/modules/common/context/CurrentUserContext';
+import { CurrentUserProvider } from '@/modules/users/context/CurrentUserContext';
 import { ConvexClientProvider } from '@/modules/common/providers/ConvexClientProvider';
 import { ThemeRegistry } from '@/modules/common/providers/ThemeRegistry';
 

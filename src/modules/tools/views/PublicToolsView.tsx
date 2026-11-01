@@ -4,17 +4,16 @@ import { SignInButton } from '@clerk/nextjs';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
-import { useQuery } from 'convex/react';
 import Link from 'next/link';
-import { api } from '@convex/_generated/api';
 import { CardGrid } from '@/modules/common/components/CardGrid';
 import { EmptyState } from '@/modules/common/components/EmptyState';
 import { Loading } from '@/modules/common/components/Loading';
-import { useCurrentUser } from '@/modules/common/context/CurrentUserContext';
+import { useCurrentUser } from '@/modules/users/context/CurrentUserContext';
 import { ToolCard } from '../components/ToolCard';
+import { usePublicTools } from '../hooks';
 
 export default function PublicToolsView() {
-  const tools = useQuery(api.tools.listPublic, {});
+  const tools = usePublicTools();
   const { isAuthenticated } = useCurrentUser();
 
   return (

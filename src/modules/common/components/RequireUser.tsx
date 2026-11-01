@@ -6,7 +6,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import type { ReactNode } from 'react';
-import { useCurrentUser } from '../context/CurrentUserContext';
+import { useCurrentUser } from '@/modules/users/context/CurrentUserContext';
 
 interface RequireUserProps {
   children: ReactNode;

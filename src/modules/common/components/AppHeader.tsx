@@ -9,7 +9,7 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useCurrentUser } from '../context/CurrentUserContext';
+import { useCurrentUser } from '@/modules/users/context/CurrentUserContext';
 
 const NAV = [
   { href: '/tools', label: 'Board' },

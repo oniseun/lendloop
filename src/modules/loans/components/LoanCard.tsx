@@ -7,8 +7,6 @@ import CardActions from '@mui/material/CardActions';
 import CardContent from '@mui/material/CardContent';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
-import { useMutation } from 'convex/react';
-import { api } from '@convex/_generated/api';
 import {
   LoanStatusChip,
   TrustedLenderBadge,
@@ -16,6 +14,7 @@ import {
 import { useRunMutation } from '@/modules/common/hooks/useRunMutation';
 import { formatRange } from '@/modules/common/utils/dates';
 import type { LoanView } from '../dto/loan.dto';
+import { useLoanActions } from '../hooks';
 import { AutomationActivity } from './AutomationActivity';
 
 interface LoanCardProps {
@@ -25,10 +24,7 @@ interface LoanCardProps {
 }
 
 export function LoanCard({ loan, readOnly = false }: LoanCardProps) {
-  const approve = useMutation(api.loans.approve);
-  const decline = useMutation(api.loans.decline);
-  const cancel = useMutation(api.loans.cancel);
-  const markReturned = useMutation(api.loans.markReturned);
+  const { approve, decline, cancel, markReturned } = useLoanActions();
   const { run, pending, error } = useRunMutation();
 
   const counterpart = loan.viewerIsLender

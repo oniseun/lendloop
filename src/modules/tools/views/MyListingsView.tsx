@@ -4,9 +4,7 @@ import AddIcon from '@mui/icons-material/Add';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
-import { useMutation, useQuery } from 'convex/react';
 import { useState } from 'react';
-import { api } from '@convex/_generated/api';
 import { CardGrid } from '@/modules/common/components/CardGrid';
 import { EmptyState } from '@/modules/common/components/EmptyState';
 import { Loading } from '@/modules/common/components/Loading';
@@ -14,15 +12,14 @@ import { PageHeader } from '@/modules/common/components/PageHeader';
 import { useRunMutation } from '@/modules/common/hooks/useRunMutation';
 import { ToolCard } from '../components/ToolCard';
 import { ToolFormDialog } from '../components/ToolFormDialog';
+import { useMyTools, useToolMutations } from '../hooks';
 import type { MyTool, ToolFormValues } from '../dto/tool.dto';
 
 type Editing = { mode: 'create' } | { mode: 'edit'; tool: MyTool } | null;
 
 export default function MyListingsView() {
-  const tools = useQuery(api.tools.mine, {});
-  const createTool = useMutation(api.tools.create);
-  const updateTool = useMutation(api.tools.update);
-  const removeTool = useMutation(api.tools.remove);
+  const tools = useMyTools();
+  const { createTool, updateTool, removeTool } = useToolMutations();
   const form = useRunMutation();
   const remove = useRunMutation();
   const [editing, setEditing] = useState<Editing>(null);

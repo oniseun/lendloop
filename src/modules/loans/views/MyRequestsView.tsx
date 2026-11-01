@@ -1,12 +1,11 @@
 'use client';
 
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
 import { PageHeader } from '@/modules/common/components/PageHeader';
 import { LoanList } from '../components/LoanList';
+import { useMyRequests } from '../hooks';
 
 export default function MyRequestsView() {
-  const loans = useQuery(api.loans.mine, {});
+  const loans = useMyRequests();
   return (
     <>
       <PageHeader

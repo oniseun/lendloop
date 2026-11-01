@@ -2,15 +2,15 @@
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
-import { api } from '@convex/_generated/api';
+import { userApi } from '../api/user.api';
 
 // Makes sure a Convex user row exists for the signed-in Clerk user,
 // then returns it (with its server-side role).
 export const useStoreUser = () => {
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const store = useMutation(api.users.store);
+  const store = useMutation(userApi.store);
   const [stored, setStored] = useState(false);
-  const me = useQuery(api.users.me, isAuthenticated && stored ? {} : 'skip');
+  const me = useQuery(userApi.me, isAuthenticated && stored ? {} : 'skip');
 
   useEffect(() => {
     if (!isAuthenticated) return;

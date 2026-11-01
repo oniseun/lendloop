@@ -3,20 +3,19 @@
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
-import { useMutation, useQuery } from 'convex/react';
 import { useState } from 'react';
-import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { ToolCategory } from '@convex/lib/constants';
 import { CardGrid } from '@/modules/common/components/CardGrid';
 import { EmptyState } from '@/modules/common/components/EmptyState';
 import { Loading } from '@/modules/common/components/Loading';
 import { PageHeader } from '@/modules/common/components/PageHeader';
-import { useCurrentUser } from '@/modules/common/context/CurrentUserContext';
+import { useCurrentUser } from '@/modules/users/context/CurrentUserContext';
 import { useRunMutation } from '@/modules/common/hooks/useRunMutation';
 import { BorrowDialog } from '../components/BorrowDialog';
 import { CategoryFilter } from '../components/CategoryFilter';
 import { ToolCard } from '../components/ToolCard';
+import { useBoardTools, useToolMutations } from '../hooks';
 
 export default function ToolsView() {
   const [category, setCategory] = useState<ToolCategory | null>(null);
@@ -24,9 +23,9 @@ export default function ToolsView() {
     _id: Id<'tools'>;
     name: string;
   } | null>(null);
-  const tools = useQuery(api.tools.list, category ? { category } : {});
+  const tools = useBoardTools(category);
   const { user } = useCurrentUser();
-  const removeTool = useMutation(api.tools.remove);
+  const { removeTool } = useToolMutations();
   const { run, pending, error } = useRunMutation();
   const isAdmin = user?.role === 'admin';
 
