@@ -17,10 +17,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "convex run seed:run",
-    "n8n:up": "docker compose up -d n8n",
+    "n8n:up": "docker compose -f docker-compose.n8n.yml up -d",
     "prepare": "husky || true",
     "e2e": "playwright test",
-    "e2e:setup": "node scripts/e2e-setup.mjs"
+    "e2e:setup": "node scripts/e2e-setup.mjs",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
   },
   "engines": {
     "node": ">=20"

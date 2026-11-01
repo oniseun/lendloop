@@ -1,12 +1,20 @@
 #!/bin/sh
 # Boots n8n with LendLoop's credential and workflows:
-#  1. builds the SMTP credential from env and imports it into n8n's
+#  1. loads the shared HMAC secrets written by convex-init (Docker setup)
+#  2. builds the SMTP credential from env and imports it into n8n's
 #     encrypted credential store (the file is deleted straight away)
-#  2. imports the exported workflows from /workflows and publishes them
-#  3. starts n8n
+#  3. imports the exported workflows from /workflows and publishes them
+#  4. starts n8n and, on first boot, creates the owner account from
+#     N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD so the editor needs no setup
 # Re-importing on every boot keeps the repo as the source of truth. Set
 # LENDLOOP_IMPORT_ON_BOOT=false to keep edits made in the n8n editor.
 set -eu
+
+if [ -f /shared/n8n.env ]; then
+  set -a
+  . /shared/n8n.env
+  set +a
+fi
 
 if [ "${LENDLOOP_IMPORT_ON_BOOT:-true}" = "true" ]; then
   cred_file="$(mktemp)"
@@ -35,4 +43,34 @@ if [ "${LENDLOOP_IMPORT_ON_BOOT:-true}" = "true" ]; then
   done
 fi
 
-exec n8n start
+n8n start &
+n8n_pid=$!
+trap 'kill -TERM "$n8n_pid" 2>/dev/null' INT TERM
+
+if [ -n "${N8N_OWNER_EMAIL:-}" ] && [ -n "${N8N_OWNER_PASSWORD:-}" ]; then
+  node -e '
+    const base = "http://localhost:5678";
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    (async () => {
+      for (let i = 0; i < 120; i++) {
+        try { if ((await fetch(base + "/healthz")).ok) break; } catch {}
+        await wait(1000);
+      }
+      const settings = await (await fetch(base + "/rest/settings")).json();
+      if (!settings.data?.userManagement?.showSetupOnFirstLoad) return;
+      const res = await fetch(base + "/rest/owner/setup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: process.env.N8N_OWNER_EMAIL,
+          password: process.env.N8N_OWNER_PASSWORD,
+          firstName: "LendLoop",
+          lastName: "Admin",
+        }),
+      });
+      console.log("[bootstrap] n8n owner account " + (res.ok ? "created" : "not created: " + res.status));
+    })().catch((e) => console.log("[bootstrap] owner setup skipped: " + e.message));
+  ' || true
+fi
+
+wait "$n8n_pid"

@@ -1,13 +1,130 @@
-# Local automation stack: n8n + Mailpit (catches every email n8n sends,
-# UI on http://localhost:8025). The app itself runs with `npm run dev`.
+# The whole LendLoop stack in one command:
+#
+#   cp .env.example .env     # optional: add Clerk keys
+#   docker compose up --build
+#
+#   app            http://localhost:3000
+#   Convex         http://localhost:3210 (API)  :3211 (HTTP actions)
+#   Convex dash    http://localhost:6791
+#   n8n            http://localhost:5678
+#   Mailpit        http://localhost:8025 (every email n8n sends)
+#
+# Start order: convex-backend (healthy) -> convex-admin-key -> convex-init
+# (deploy, env, seed) -> n8n + web. Generated keys and secrets live in the
+# `shared` volume and are reused on the next `up`.
+
+x-node-healthcheck: &node-healthcheck
+  interval: 5s
+  timeout: 5s
+  retries: 5
+
 services:
-  n8n:
-    image: n8nio/n8n:2.45.7
+  convex-backend:
     restart: unless-stopped
+    image: ghcr.io/convex/convex-backend:latest
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - '3210:3210'
+      - '3211:3211'
+    volumes:
+      - convex_data:/convex/data
+    environment:
+      CONVEX_CLOUD_ORIGIN: http://127.0.0.1:3210
+      CONVEX_SITE_ORIGIN: http://127.0.0.1:3211
+      DISABLE_BEACON: 'true'
+      RUST_LOG: warn
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 10s
+
+  convex-dashboard:
+    restart: unless-stopped
+    image: ghcr.io/convex/convex-dashboard:latest
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - '6791:6791'
+    environment:
+      NEXT_PUBLIC_DEPLOYMENT_URL: http://127.0.0.1:3210
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+
+  # Derives the admin key from the backend's stored instance secret.
+  convex-admin-key:
+    image: ghcr.io/convex/convex-backend:latest
+    entrypoint:
+      [
+        '/bin/bash',
+        '-c',
+        './generate_admin_key.sh | tail -n 1 > /shared/admin_key',
+      ]
+    volumes:
+      - convex_data:/convex/data
+      - shared:/shared
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+
+  # Clerk keys, HMAC secrets, Convex env, deploy and seed. Exits when done.
+  convex-init:
+    build: .
+    command: ['node', 'docker/convex-init.mjs']
+    volumes:
+      - shared:/shared
+    environment:
+      CONVEX_SELF_HOSTED_URL: http://convex-backend:3210
+      N8N_REQUEST_WEBHOOK_URL: http://n8n:5678/webhook/lendloop/request-events
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+    depends_on:
+      convex-admin-key:
+        condition: service_completed_successfully
+
+  web:
+    restart: unless-stopped
+    build: .
+    ports:
+      - '3000:3000'
+    volumes:
+      - shared:/shared:ro
+    environment:
+      # Read by the browser, so it's the host-published port.
+      NEXT_PUBLIC_CONVEX_URL: http://127.0.0.1:3210
+    depends_on:
+      convex-init:
+        condition: service_completed_successfully
+    healthcheck:
+      <<: *node-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      # First start runs `next build`.
+      start_period: 300s
+
+  n8n:
+    restart: unless-stopped
+    image: n8nio/n8n:2.45.7
     ports:
       - '5678:5678'
-    env_file: n8n/.env
     environment:
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/London}
+      N8N_OWNER_EMAIL: ${N8N_OWNER_EMAIL:-admin@lendloop.local}
+      N8N_OWNER_PASSWORD: ${N8N_OWNER_PASSWORD:-}
+      LENDLOOP_CONVEX_SITE_URL: http://convex-backend:3211
+      LENDLOOP_APP_URL: http://localhost:3000
+      LENDLOOP_NOTIFY_CHANNEL: ${LENDLOOP_NOTIFY_CHANNEL:-email}
+      LENDLOOP_EMAIL_FROM: LendLoop <noreply@lendloop.local>
+      LENDLOOP_ALERT_EMAIL: ${LENDLOOP_ALERT_EMAIL:-ops@lendloop.local}
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
       # Code nodes need crypto for HMAC and $env for the shared secrets.
       NODE_FUNCTION_ALLOW_BUILTIN: crypto
       N8N_BLOCK_ENV_ACCESS_IN_NODE: 'false'
@@ -19,20 +136,38 @@ services:
     entrypoint: ['/bin/sh', '/bootstrap/bootstrap.sh']
     volumes:
       - n8n_data:/home/node/.n8n
+      - shared:/shared:ro
       - ./n8n/workflows:/workflows:ro
       - ./n8n/docker/bootstrap.sh:/bootstrap/bootstrap.sh:ro
-    extra_hosts:
-      # Lets n8n reach a local Convex backend on the host (port 3211).
-      - 'host.docker.internal:host-gateway'
     depends_on:
-      - mailpit
+      convex-init:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      <<: *node-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:5678/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      start_period: 60s
 
   mailpit:
-    image: axllent/mailpit:v1.33
     restart: unless-stopped
+    image: axllent/mailpit:v1.33
     ports:
       - '8025:8025'
       - '1025:1025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
+  convex_data:
   n8n_data:
+  shared:
