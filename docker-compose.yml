@@ -151,7 +151,7 @@ services:
           'CMD',
           'node',
           '-e',
-          "fetch('http://localhost:5678/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+          "require('fs').existsSync('/tmp/lendloop-ready') || process.exit(1); fetch('http://localhost:5678/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
         ]
       start_period: 60s
 
