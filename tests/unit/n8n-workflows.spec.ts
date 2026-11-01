@@ -42,28 +42,43 @@ const codeOf = (file: string, nodeName: string) => {
 type Sandbox = {
   $env: Record<string, string>;
   $json: unknown;
-  $input?: unknown;
+  rawBody?: string;
   staticData?: Record<string, unknown>;
 };
 
-const runCode = (code: string, sandbox: Sandbox) => {
-  const fn = new Function(
+const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+
+// Mimics the bits of the n8n Code node runtime these scripts use.
+const runCode = async (code: string, sandbox: Sandbox) => {
+  const fn = new AsyncFunction(
     'require',
     '$env',
     '$json',
     '$input',
     '$getWorkflowStaticData',
+    '$itemIndex',
     code,
   );
-  return fn(
+  const binary = sandbox.rawBody
+    ? { data: { id: 'filesystem-v2:abc', mimeType: 'application/json' } }
+    : undefined;
+  const helpers = {
+    getBinaryDataBuffer: async () => Buffer.from(sandbox.rawBody ?? ''),
+  };
+  return fn.call(
+    { helpers },
     (name: string) => {
       if (name !== 'crypto') throw new Error(`blocked require: ${name}`);
       return nodeCrypto;
     },
     sandbox.$env,
     sandbox.$json,
-    sandbox.$input ?? { item: {}, first: () => ({ json: sandbox.$json }) },
+    {
+      item: { json: sandbox.$json, binary },
+      first: () => ({ json: sandbox.$json }),
+    },
     () => sandbox.staticData ?? {},
+    0,
   );
 };
 
@@ -99,7 +114,7 @@ describe('exported n8n workflows', () => {
     const httpNodes = workflows['overdue-reminders.json'].nodes.filter(
       (node) => node.type === 'n8n-nodes-base.httpRequest',
     );
-    expect(httpNodes).toHaveLength(2);
+    expect(httpNodes).toHaveLength(3);
     for (const node of httpNodes) expect(node.retryOnFail).toBe(true);
   });
 });
@@ -109,7 +124,7 @@ describe('n8n -> Convex signing (Code nodes)', () => {
   const $env = { LENDLOOP_N8N_TO_CONVEX_SECRET: secret };
 
   it('overdue GET signature is accepted by Convex', async () => {
-    const out = runCode(
+    const out = await runCode(
       codeOf('overdue-reminders.json', 'Sign overdue request'),
       {
         $env,
@@ -126,16 +141,34 @@ describe('n8n -> Convex signing (Code nodes)', () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it('reminder write-back signature is accepted by Convex', async () => {
-    const out = runCode(codeOf('overdue-reminders.json', 'Sign write-back'), {
+  it('reminder claim signature is accepted by Convex', async () => {
+    const out = await runCode(codeOf('overdue-reminders.json', 'Sign claim'), {
       $env,
-      $json: {
-        loanId: 'loan1',
-        reminderDate: '2026-11-01',
-        status: 'sent',
-        channel: 'email',
-      },
+      $json: { loanId: 'loan1', reminderDate: '2026-11-01' },
     });
+    const result = await verifySignature({
+      secret,
+      signature: out.json.signature,
+      timestamp: out.json.timestamp,
+      route: 'POST /api/automation/reminders/claim',
+      body: out.json.body,
+    });
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('reminder write-back signature is accepted by Convex', async () => {
+    const out = await runCode(
+      codeOf('overdue-reminders.json', 'Sign write-back'),
+      {
+        $env,
+        $json: {
+          loanId: 'loan1',
+          reminderDate: '2026-11-01',
+          status: 'sent',
+          channel: 'email',
+        },
+      },
+    );
     expect(JSON.parse(out.json.body)).toEqual({
       loanId: 'loan1',
       reminderDate: '2026-11-01',
@@ -174,14 +207,29 @@ describe('Convex -> n8n verification (Code node)', () => {
   });
 
   it('accepts an event signed by Convex', async () => {
-    const out = runCode(verifyCode, { $env, $json: await webhookItem(body) });
+    const out = await runCode(verifyCode, {
+      $env,
+      $json: await webhookItem(body),
+    });
+    expect(out.json).toEqual({ status: 'ok', event });
+  });
+
+  it('verifies the raw bytes when the webhook stored them as binary', async () => {
+    const headers = await signedHeaders(secret, REQUEST_EVENTS_ROUTE, body);
+    // Parsed body differs from the bytes on the wire: only the raw bytes
+    // match the signature.
+    const out = await runCode(verifyCode, {
+      $env,
+      $json: { headers, body: { reordered: true } },
+      rawBody: body,
+    });
     expect(out.json).toEqual({ status: 'ok', event });
   });
 
   it('rejects a tampered body', async () => {
     const headers = await signedHeaders(secret, REQUEST_EVENTS_ROUTE, body);
     const tampered = body.replace('Amara', 'Mallory');
-    const out = runCode(verifyCode, {
+    const out = await runCode(verifyCode, {
       $env,
       $json: await webhookItem(tampered, headers),
     });
@@ -194,7 +242,7 @@ describe('Convex -> n8n verification (Code node)', () => {
   it('rejects an old timestamp', async () => {
     const at = Date.now() - 10 * 60 * 1000;
     const headers = await signedHeaders(secret, REQUEST_EVENTS_ROUTE, body, at);
-    const out = runCode(verifyCode, {
+    const out = await runCode(verifyCode, {
       $env,
       $json: await webhookItem(body, headers),
     });
@@ -202,7 +250,7 @@ describe('Convex -> n8n verification (Code node)', () => {
   });
 
   it('flags an event that was already processed', async () => {
-    const out = runCode(verifyCode, {
+    const out = await runCode(verifyCode, {
       $env,
       $json: await webhookItem(body),
       staticData: { processedEvents: { [event.eventId]: Date.now() } },

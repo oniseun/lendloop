@@ -109,12 +109,77 @@
       }
     },
     {
-      "id": "if-0018",
+      "id": "code-0018",
+      "name": "Sign claim",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Claims today's reminder for this loan before anything is sent, so two\n// runs (or a run after a failed write-back) never email twice.\n// Signed string: `${timestamp}.POST /api/automation/reminders/claim.${body}`\nconst crypto = require('crypto');\nconst SECRET = $env.LENDLOOP_N8N_TO_CONVEX_SECRET;\nif (!SECRET) throw new Error('LENDLOOP_N8N_TO_CONVEX_SECRET is not set');\n\nconst body = JSON.stringify({ loanId: $json.loanId, reminderDate: $json.reminderDate });\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst route = 'POST /api/automation/reminders/claim';\nconst signature =\n  'v1=' +\n  crypto.createHmac('sha256', SECRET).update(`${timestamp}.${route}.${body}`).digest('hex');\n\nreturn { json: { body, timestamp, signature } };\n"
+      }
+    },
+    {
+      "id": "http-0019",
+      "name": "Claim reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LENDLOOP_CONVEX_SITE_URL }}/api/automation/reminders/claim",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "code-0020",
+      "name": "Keep claimed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Only reminders Convex handed to this run go on to be sent.\nreturn $input.all().flatMap((item, index) =>\n  item.json.data && item.json.data.claimed === true\n    ? [{ json: $('Build reminder').itemMatching(index).json, pairedItem: { item: index } }]\n    : [],\n);\n"
+      }
+    },
+    {
+      "id": "if-0021",
       "name": "Email channel?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1100,
+        1760,
         300
       ],
       "parameters": {
@@ -127,7 +192,7 @@
           },
           "conditions": [
             {
-              "id": "fa6d7687-a122-48e8-a223-5d23d3437642",
+              "id": "99f718d0-f97a-4654-8370-95087d251774",
               "leftValue": "={{ $env.LENDLOOP_NOTIFY_CHANNEL }}",
               "rightValue": "email",
               "operator": {
@@ -142,12 +207,12 @@
       }
     },
     {
-      "id": "email-0019",
+      "id": "email-0022",
       "name": "Send reminder email",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        1320,
+        1980,
         180
       ],
       "retryOnFail": true,
@@ -172,12 +237,12 @@
       "onError": "continueErrorOutput"
     },
     {
-      "id": "code-0020",
+      "id": "code-0023",
       "name": "Mock reminder",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1320,
+        1980,
         420
       ],
       "parameters": {
@@ -186,12 +251,12 @@
       }
     },
     {
-      "id": "code-0021",
+      "id": "code-0024",
       "name": "Mark sent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
+        2200,
         300
       ],
       "parameters": {
@@ -200,12 +265,12 @@
       }
     },
     {
-      "id": "code-0022",
+      "id": "code-0025",
       "name": "Mark failed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
+        2200,
         120
       ],
       "parameters": {
@@ -214,12 +279,12 @@
       }
     },
     {
-      "id": "code-0023",
+      "id": "code-0026",
       "name": "Sign write-back",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1760,
+        2420,
         300
       ],
       "parameters": {
@@ -228,12 +293,12 @@
       }
     },
     {
-      "id": "http-0024",
+      "id": "http-0027",
       "name": "Write back reminder status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1980,
+        2640,
         300
       ],
       "retryOnFail": true,
@@ -322,6 +387,39 @@
       ]
     },
     "Build reminder": {
+      "main": [
+        [
+          {
+            "node": "Sign claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign claim": {
+      "main": [
+        [
+          {
+            "node": "Claim reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim reminder": {
+      "main": [
+        [
+          {
+            "node": "Keep claimed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep claimed": {
       "main": [
         [
           {
