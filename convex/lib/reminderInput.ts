@@ -42,3 +42,23 @@ export const parseReminderInput = (
   }
   return { ok: true, value: { loanId, reminderDate, status, channel } };
 };
+
+export const parseReminderClaim = (
+  raw: string,
+):
+  | { ok: true; value: { loanId: string; reminderDate: string } }
+  | { ok: false; error: string } => {
+  // A claim is a write-back without a status yet.
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: 'INVALID_JSON' };
+  }
+  const parsed = parseReminderInput(
+    JSON.stringify({ ...(body as object), status: 'sent' }),
+  );
+  if (!parsed.ok) return parsed;
+  const { loanId, reminderDate } = parsed.value;
+  return { ok: true, value: { loanId, reminderDate } };
+};

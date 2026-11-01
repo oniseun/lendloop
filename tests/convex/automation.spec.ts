@@ -6,6 +6,7 @@ import {
   TIMESTAMP_HEADER,
   verifySignature,
 } from '../../convex/lib/signature';
+import { listOverdueLoans } from '../../convex/model/automation';
 import { createTest, signIn, type TestConvex } from './setup';
 
 const INBOUND_SECRET = 'n8n-to-convex-test';
@@ -261,6 +262,78 @@ describe('n8n -> Convex overdue endpoint', () => {
     expect(await send('failed')).toMatchObject({ message: 'RECORDED' });
     expect(await send('sent')).toMatchObject({ message: 'UPDATED' });
     expect(await send('failed')).toMatchObject({ message: 'UNCHANGED' });
+  });
+
+  it('lets only one run claim a reminder, and hides claimed loans', async () => {
+    const t = createTest();
+    const { loanId } = await createOverdueLoan(t);
+    const body = JSON.stringify({ loanId, reminderDate: '2026-11-10' });
+    const claim = async () => {
+      vi.advanceTimersByTime(1000);
+      const res = await signedFetch(
+        t,
+        'POST',
+        '/api/automation/reminders/claim',
+        body,
+      );
+      return (await res.json()).data.claimed;
+    };
+    expect(await claim()).toBe(true);
+    expect(await claim()).toBe(false);
+
+    const overdue = await signedFetch(t, 'GET', '/api/loans/overdue');
+    expect((await overdue.json()).data.loans).toHaveLength(0);
+
+    // A failed send frees the claim for a retry.
+    const failed = JSON.stringify({
+      loanId,
+      reminderDate: '2026-11-10',
+      status: 'failed',
+    });
+    vi.advanceTimersByTime(1000);
+    await signedFetch(t, 'POST', '/api/automation/reminders', failed);
+    expect(await claim()).toBe(true);
+  });
+
+  it('skips handled loans before applying the page limit', async () => {
+    const t = createTest();
+    const { loanId } = await createOverdueLoan(t);
+    const second = await t.run(async (ctx) => {
+      const loan = (await ctx.db.get(loanId))!;
+      const { _id: _ignored, _creationTime: _ignoredTime, ...rest } = loan;
+      return ctx.db.insert('loans', { ...rest, endDate: '2026-11-08' });
+    });
+    const body = JSON.stringify({ loanId, reminderDate: '2026-11-10' });
+    await signedFetch(t, 'POST', '/api/automation/reminders/claim', body);
+
+    const page = await t.run((ctx) => listOverdueLoans(ctx, '2026-11-10', 1));
+    expect(page.map((loan) => loan.loanId)).toEqual([second]);
+  });
+
+  it('answers a retried claim the same way instead of stranding it', async () => {
+    const t = createTest();
+    const { loanId } = await createOverdueLoan(t);
+    const body = JSON.stringify({ loanId, reminderDate: '2026-11-10' });
+    const route = 'POST /api/automation/reminders/claim';
+    const headers = {
+      'content-type': 'application/json',
+      ...(await signedHeaders(INBOUND_SECRET, route, body)),
+    };
+    const init = { method: 'POST', headers, body };
+    const first = await (
+      await t.fetch('/api/automation/reminders/claim', init)
+    ).json();
+    const retry = await (
+      await t.fetch('/api/automation/reminders/claim', init)
+    ).json();
+    expect(first).toMatchObject({
+      message: 'CLAIMED',
+      data: { claimed: true },
+    });
+    expect(retry).toMatchObject({
+      message: 'REPLAYED',
+      data: { claimed: true },
+    });
   });
 
   it('ignores an exact replay of an accepted request', async () => {

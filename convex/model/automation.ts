@@ -112,27 +112,30 @@ export interface OverdueLoan {
   tool: { name: string };
 }
 
-// Approved loans past their end date that have not had a successful
-// reminder today. Only the fields the reminder needs leave Convex.
+// Approved loans past their end date with no reminder claimed or sent
+// today. Only the fields the reminder needs leave Convex.
 export const listOverdueLoans = async (
   ctx: QueryCtx,
   today: string,
   limit = 100,
 ): Promise<OverdueLoan[]> => {
-  const loans = await ctx.db
+  const loans = ctx.db
     .query('loans')
     .withIndex('by_status_end', (q) =>
       q.eq('status', 'approved').lt('endDate', today),
-    )
-    .take(limit);
+    );
 
   const result: OverdueLoan[] = [];
-  for (const loan of loans) {
+  // Skip already-handled loans before applying the limit, so loans past
+  // the first page are never starved.
+  for await (const loan of loans) {
+    if (result.length >= limit) break;
     const reminder = await ctx.db
       .query('automationEvents')
       .withIndex('by_key', (q) => q.eq('key', reminderKey(loan._id, today)))
       .unique();
-    if (reminder?.status === 'sent') continue;
+    // Claimed (queued) or sent today: not ours to send again.
+    if (reminder && reminder.status !== 'failed') continue;
 
     const [borrower, tool] = await Promise.all([
       ctx.db.get(loan.borrowerId),

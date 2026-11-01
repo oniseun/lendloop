@@ -215,6 +215,61 @@ export const recordReminder = internalMutation({
   },
 });
 
+export type ReminderClaimResult =
+  | { outcome: 'claimed' | 'already_claimed' | 'replayed'; claimed: boolean }
+  | { outcome: 'loan_not_found'; claimed: false };
+
+export const claimReminder = internalMutation({
+  args: {
+    signature: v.string(),
+    loanId: v.string(),
+    reminderDate: v.string(),
+  },
+  handler: async (ctx, args): Promise<ReminderClaimResult> => {
+    const seen = await ctx.db
+      .query('webhookReceipts')
+      .withIndex('by_signature', (q) => q.eq('signature', args.signature))
+      .unique();
+    const loanId = ctx.db.normalizeId('loans', args.loanId);
+    const loan = loanId ? await ctx.db.get(loanId) : null;
+    if (!loanId || !loan) return { outcome: 'loan_not_found', claimed: false };
+
+    const key = reminderKey(loanId, args.reminderDate);
+    const existing = await ctx.db
+      .query('automationEvents')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+
+    // n8n retrying the exact same claim (e.g. the first response timed
+    // out): answer as before instead of stranding the claim.
+    if (seen) {
+      return { outcome: 'replayed', claimed: existing?.status === 'queued' };
+    }
+
+    await ctx.db.insert('webhookReceipts', {
+      signature: args.signature,
+      receivedAt: Date.now(),
+    });
+
+    if (existing && existing.status !== 'failed') {
+      logger.warn('reminder already claimed', { loanId });
+      return { outcome: 'already_claimed', claimed: false };
+    }
+
+    await upsertAutomationEvent(ctx, {
+      loanId,
+      kind: 'overdue_reminder',
+      key,
+      status: 'queued',
+    });
+    logger.info('reminder claimed', {
+      loanId,
+      reminderDate: args.reminderDate,
+    });
+    return { outcome: 'claimed', claimed: true };
+  },
+});
+
 // Receipts only need to live as long as the timestamp window.
 export const pruneReceipts = internalMutation({
   args: {},

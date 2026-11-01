@@ -4,7 +4,7 @@ import { httpAction } from './_generated/server';
 import { todayIso } from './lib/dates';
 import { json } from './lib/http';
 import { createLogger } from './lib/logger';
-import { parseReminderInput } from './lib/reminderInput';
+import { parseReminderClaim, parseReminderInput } from './lib/reminderInput';
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -16,6 +16,7 @@ const http = httpRouter();
 
 export const OVERDUE_ROUTE = 'GET /api/loans/overdue';
 export const REMINDERS_ROUTE = 'POST /api/automation/reminders';
+export const REMINDER_CLAIM_ROUTE = 'POST /api/automation/reminders/claim';
 const MAX_BODY_BYTES = 4 * 1024;
 
 const verifyInbound = async (request: Request, route: string, body: string) => {
@@ -88,6 +89,38 @@ http.route({
     return json(200, {
       success: true,
       message: result.outcome.toUpperCase(),
+    });
+  }),
+});
+
+http.route({
+  path: '/api/automation/reminders/claim',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.text();
+    if (body.length > MAX_BODY_BYTES) {
+      return json(413, { success: false, message: 'BODY_TOO_LARGE' });
+    }
+    const rejected = await verifyInbound(request, REMINDER_CLAIM_ROUTE, body);
+    if (rejected) return rejected;
+
+    const parsed = parseReminderClaim(body);
+    if (!parsed.ok) {
+      return json(400, { success: false, message: parsed.error });
+    }
+
+    const result = await ctx.runMutation(internal.automation.claimReminder, {
+      ...parsed.value,
+      signature: request.headers.get(SIGNATURE_HEADER)!,
+    });
+    if (result.outcome === 'loan_not_found') {
+      return json(404, { success: false, message: 'LOAN_NOT_FOUND' });
+    }
+    // n8n sends the reminder only when claimed is true.
+    return json(200, {
+      success: true,
+      message: result.outcome.toUpperCase(),
+      data: { claimed: result.claimed },
     });
   }),
 });
