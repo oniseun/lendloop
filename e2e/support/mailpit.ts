@@ -3,14 +3,17 @@
 
 export const mailpitUrl = () => process.env.E2E_MAILPIT_URL;
 
-interface MailpitMessage {
+export interface MailpitMessage {
   ID: string;
   Subject: string;
   To: { Address: string }[];
   Snippet: string;
 }
 
-export const findEmail = async (to: string, contains: string) => {
+export const findEmail = async (
+  to: string,
+  contains: string,
+): Promise<MailpitMessage | null> => {
   const query = encodeURIComponent(`to:"${to}" ${JSON.stringify(contains)}`);
   const response = await fetch(`${mailpitUrl()}/api/v1/search?query=${query}`);
   const body = (await response.json()) as { messages: MailpitMessage[] };
