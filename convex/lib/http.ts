@@ -5,10 +5,7 @@ export interface ResponseFormat<T> {
   data?: T;
 }
 
-export const json = <T>(
-  status: number,
-  body: ResponseFormat<T>,
-): Response =>
+export const json = <T>(status: number, body: ResponseFormat<T>): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: {

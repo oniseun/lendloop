@@ -14,7 +14,9 @@ export const loans = adminQuery({
   handler: async (ctx, { status }) => {
     const today = todayIso();
     const all = await ctx.db.query('loans').order('desc').take(200);
-    const filtered = status ? all.filter((loan) => loan.status === status) : all;
+    const filtered = status
+      ? all.filter((loan) => loan.status === status)
+      : all;
     return Promise.all(
       filtered.map((loan) => presentLoan(ctx, loan, ctx.user._id, today)),
     );

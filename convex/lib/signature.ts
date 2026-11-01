@@ -87,7 +87,8 @@ export const verifySignature = async ({
   now = Date.now(),
   toleranceMs = SIGNATURE_TOLERANCE_MS,
 }: VerifyInput): Promise<VerifyResult> => {
-  if (!signature || !timestamp) return { ok: false, reason: 'MISSING_SIGNATURE' };
+  if (!signature || !timestamp)
+    return { ok: false, reason: 'MISSING_SIGNATURE' };
   if (!signature.startsWith(`${VERSION}=`)) {
     return { ok: false, reason: 'MALFORMED_SIGNATURE' };
   }
@@ -98,7 +99,11 @@ export const verifySignature = async ({
   if (Math.abs(now - ts * 1000) > toleranceMs) {
     return { ok: false, reason: 'TIMESTAMP_OUT_OF_RANGE' };
   }
-  const expected = await computeSignature(secret, { timestamp: ts, route, body });
+  const expected = await computeSignature(secret, {
+    timestamp: ts,
+    route,
+    body,
+  });
   if (!timingSafeEqual(expected, signature)) {
     return { ok: false, reason: 'INVALID_SIGNATURE' };
   }

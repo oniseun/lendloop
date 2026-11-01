@@ -6,7 +6,10 @@ type LoanRef = Pick<Doc<'loans'>, 'status' | 'startDate' | 'endDate'>;
 
 // A tool is out once an approved loan has started and until the lender
 // marks it returned, even if the borrower is late.
-export const availabilityFor = (loans: LoanRef[], today: string): Availability =>
+export const availabilityFor = (
+  loans: LoanRef[],
+  today: string,
+): Availability =>
   loans.some((loan) => loan.status === 'approved' && loan.startDate <= today)
     ? 'on_loan'
     : 'available';

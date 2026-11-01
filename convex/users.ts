@@ -73,7 +73,8 @@ export const setRole = internalMutation({
       .query('users')
       .withIndex('by_email', (q) => q.eq('email', email.toLowerCase()))
       .unique();
-    if (!user) throw appError(ErrorCode.USER_NOT_FOUND, 'No user with that email');
+    if (!user)
+      throw appError(ErrorCode.USER_NOT_FOUND, 'No user with that email');
     await ctx.db.patch(user._id, { role });
     logger.info('role changed', { userId: user._id, role });
     return user._id;

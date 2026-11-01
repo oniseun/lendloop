@@ -1,10 +1,7 @@
 import { v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { query } from './_generated/server';
-import {
-  TOOL_DESCRIPTION_MAX,
-  TOOL_NAME_MAX,
-} from './lib/constants';
+import { TOOL_DESCRIPTION_MAX, TOOL_NAME_MAX } from './lib/constants';
 import { todayIso } from './lib/dates';
 import { appError, ErrorCode } from './lib/errors';
 import { userMutation, userQuery } from './lib/functions';
@@ -24,10 +21,7 @@ const toolFields = {
   description: v.string(),
 };
 
-const cleanToolInput = (input: {
-  name: string;
-  description: string;
-}) => ({
+const cleanToolInput = (input: { name: string; description: string }) => ({
   name: cleanText(input.name, { field: 'Name', min: 2, max: TOOL_NAME_MAX }),
   description: cleanText(input.description, {
     field: 'Description',

@@ -4,7 +4,11 @@ type LogContext = Record<string, string | number | boolean | null | undefined>;
 // Structured logs only. Pass ids and outcomes, never emails, names,
 // signatures or secrets.
 export const createLogger = (scope: string) => {
-  const write = (level: LogLevel, message: string, context: LogContext = {}) => {
+  const write = (
+    level: LogLevel,
+    message: string,
+    context: LogContext = {},
+  ) => {
     const line = JSON.stringify({ level, scope, message, ...context });
     if (level === 'error') console.error(line);
     else if (level === 'warn') console.warn(line);
