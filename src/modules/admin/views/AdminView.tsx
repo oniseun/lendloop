@@ -11,15 +11,20 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Tabs from '@mui/material/Tabs';
-import { useMutation, useQuery } from 'convex/react';
 import { useState } from 'react';
-import { api } from '@convex/_generated/api';
 import { EmptyState } from '@/modules/common/components/EmptyState';
 import { Loading } from '@/modules/common/components/Loading';
 import { PageHeader } from '@/modules/common/components/PageHeader';
 import { useRunMutation } from '@/modules/common/hooks/useRunMutation';
 import { timeAgo } from '@/modules/common/utils/dates';
 import { LoanList } from '@/modules/loans/components/LoanList';
+import {
+  useAdminLoans,
+  useAdminUsers,
+  useFailedDeliveries,
+  useRetryDelivery,
+  useSetTrustedLender,
+} from '../hooks';
 
 type AdminTab = 'loans' | 'lenders' | 'automation';
 
@@ -48,13 +53,13 @@ export default function AdminView() {
 }
 
 function AllLoans() {
-  const loans = useQuery(api.admin.loans, {});
+  const loans = useAdminLoans();
   return <LoanList loans={loans} emptyMessage="No loans yet." readOnly />;
 }
 
 function Lenders() {
-  const users = useQuery(api.admin.users, {});
-  const setTrusted = useMutation(api.admin.setTrustedLender);
+  const users = useAdminUsers();
+  const setTrusted = useSetTrustedLender();
   const { run, pending, error } = useRunMutation();
 
   if (users === undefined) return <Loading />;
@@ -108,8 +113,8 @@ function Lenders() {
 }
 
 function FailedDeliveries() {
-  const failed = useQuery(api.admin.failedDeliveries, {});
-  const retry = useMutation(api.admin.retryDelivery);
+  const failed = useFailedDeliveries();
+  const retry = useRetryDelivery();
   const { run, pending, error } = useRunMutation();
 
   if (failed === undefined) return <Loading />;
