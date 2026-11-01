@@ -1,20 +1,11 @@
 import type { Doc } from '../_generated/dataModel';
 import type { QueryCtx } from '../_generated/server';
+import { getCurrentUser } from '../modules/users/user.service';
 import { appError, ErrorCode } from './errors';
 import { isAdmin } from './permissions';
 
-export const getCurrentUser = async (
-  ctx: QueryCtx,
-): Promise<Doc<'users'> | null> => {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) return null;
-  return ctx.db
-    .query('users')
-    .withIndex('by_token', (q) =>
-      q.eq('tokenIdentifier', identity.tokenIdentifier),
-    )
-    .unique();
-};
+// Guards used by the custom function builders in ./functions.ts, the
+// Convex equivalent of an auth guard on a controller.
 
 export const requireUser = async (ctx: QueryCtx): Promise<Doc<'users'>> => {
   const identity = await ctx.auth.getUserIdentity();
