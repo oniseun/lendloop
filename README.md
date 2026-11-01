@@ -82,25 +82,25 @@ npx convex run users:setRole '{"email":"you@example.com","role":"admin"}'
 
 ### Try the automations
 
-- **Request notification:** borrow one of the demo tools. The owner's email shows up in Mailpit within a second or two, and the loan shows "Notification sent just now".
-- **Overdue reminders:** open _LendLoop – Overdue reminders_ in n8n and run it with the manual trigger (it also runs daily at 09:00). The seeded overdue drill gets a reminder in Mailpit and the loan shows "Reminder sent". Run it again: nothing is sent twice.
+- **Request notification:** borrow one of the demo tools. The owner's email shows up in Mailpit within a second or two, and the loan shows "Notification sent less than a minute ago".
+- **Overdue reminders:** open _LendLoop – Overdue reminders_ in n8n and run it with the manual trigger (it also runs daily at 09:00). The seeded overdue drill gets a reminder in Mailpit and the loan shows "Reminder sent". Run it again and nothing is sent twice.
 
 ## 🔑 Environment Variables
 
-| Where | Variable | Purpose |
-| --- | --- | --- |
-| `.env.local` | `NEXT_PUBLIC_CONVEX_URL` | Convex client URL (written by `convex dev`) |
-| `.env.local` | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | Clerk |
-| Convex env | `CLERK_JWT_ISSUER_DOMAIN` | Clerk issuer Convex trusts |
-| Convex env | `ADMIN_EMAILS` | Comma-separated, first-admin bootstrap |
-| Convex env | `N8N_REQUEST_WEBHOOK_URL` | n8n webhook for request events |
-| Convex env | `CONVEX_TO_N8N_SECRET` | HMAC key, Convex → n8n |
-| Convex env | `N8N_TO_CONVEX_SECRET` | HMAC key, n8n → Convex |
-| `n8n/.env` | `LENDLOOP_CONVEX_TO_N8N_SECRET`, `LENDLOOP_N8N_TO_CONVEX_SECRET` | Same two keys, n8n side |
-| `n8n/.env` | `LENDLOOP_CONVEX_SITE_URL` | Convex HTTP actions base URL (`*.convex.site`, or `host.docker.internal:3211` locally) |
-| `n8n/.env` | `LENDLOOP_NOTIFY_CHANNEL` | `email` (SMTP credential) or `mock` (masked log line) |
-| `n8n/.env` | `SMTP_*`, `LENDLOOP_EMAIL_FROM`, `LENDLOOP_ALERT_EMAIL` | Email + failure alerts |
-| `n8n/.env` | `N8N_ENCRYPTION_KEY` | Encrypts n8n's credential store |
+| Where        | Variable                                                         | Purpose                                                                                |
+| ------------ | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `.env.local` | `NEXT_PUBLIC_CONVEX_URL`                                         | Convex client URL (written by `convex dev`)                                            |
+| `.env.local` | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`          | Clerk                                                                                  |
+| Convex env   | `CLERK_JWT_ISSUER_DOMAIN`                                        | Clerk issuer Convex trusts                                                             |
+| Convex env   | `ADMIN_EMAILS`                                                   | Comma-separated, first-admin bootstrap                                                 |
+| Convex env   | `N8N_REQUEST_WEBHOOK_URL`                                        | n8n webhook for request events                                                         |
+| Convex env   | `CONVEX_TO_N8N_SECRET`                                           | HMAC key, Convex → n8n                                                                 |
+| Convex env   | `N8N_TO_CONVEX_SECRET`                                           | HMAC key, n8n → Convex                                                                 |
+| `n8n/.env`   | `LENDLOOP_CONVEX_TO_N8N_SECRET`, `LENDLOOP_N8N_TO_CONVEX_SECRET` | Same two keys, n8n side                                                                |
+| `n8n/.env`   | `LENDLOOP_CONVEX_SITE_URL`                                       | Convex HTTP actions base URL (`*.convex.site`, or `host.docker.internal:3211` locally) |
+| `n8n/.env`   | `LENDLOOP_NOTIFY_CHANNEL`                                        | `email` (SMTP credential) or `mock` (masked log line)                                  |
+| `n8n/.env`   | `SMTP_*`, `LENDLOOP_EMAIL_FROM`, `LENDLOOP_ALERT_EMAIL`          | Email + failure alerts                                                                 |
+| `n8n/.env`   | `N8N_ENCRYPTION_KEY`                                             | Encrypts n8n's credential store                                                        |
 
 No server secret lives in Next.js. Next only has public config plus the Clerk secret key its middleware needs.
 
@@ -112,9 +112,10 @@ No server secret lives in Next.js. Next only has public config plus the Clerk se
                                                   │  outbox row + scheduler
                                                   ▼
                                    signed POST ─► n8n "Request notification" ─► email
-                                                                                 
+
  n8n "Overdue reminders" (daily) ── signed GET  ─► Convex /api/loans/overdue
-                                 ── email each borrower
+                                 ── signed POST ─► Convex /api/automation/reminders/claim
+                                 ── email each claimed borrower
                                  ── signed POST ─► Convex /api/automation/reminders (idempotent)
 
  any n8n failure ─► n8n "Error handler" ─► log + alert email
@@ -177,7 +178,8 @@ Also: server-side length limits and trimming on all text, date validation (no pa
 ## 🔁 Reliability and Error Handling
 
 - **Outbox.** A loan change and its webhook row are written in the same Convex transaction. If the mutation fails, nothing is sent. If n8n is down, the scheduler retries (3 attempts, 30s then 2m backoff), then marks the delivery `failed`. Failed deliveries show on the loan ("Notification failed") and in **Admin → Failed automations**, with a retry button.
-- **Idempotency.** Event ids are `<loanId>:<transition>`. Each transition can only happen once, so a duplicate can't be queued. n8n marks an event processed only after the email has gone out, so a retried delivery after a failed send still notifies. Reminder write-backs are keyed on `(loanId, date)`: retries don't duplicate, a `failed` can be upgraded to `sent`, and a `sent` is never downgraded. Overdue loans already reminded today are left out of the next fetch.
+- **Idempotency.** Event ids are `<loanId>:<transition>`. Each transition can only happen once, so a duplicate can't be queued. n8n marks an event processed only after the email has gone out (kept 30 days), so a retried delivery after a failed send still notifies.
+- **Reminders: at most one per loan per day.** Before sending, n8n claims `(loanId, date)` through a signed `POST /api/automation/reminders/claim`. The claim is written atomically in Convex, so overlapping runs, or a run after a write-back that failed once the email had already gone, can't email twice. Only a reminder written back as `failed` can be claimed again. The write-back is keyed the same way: retries don't duplicate, and a `sent` is never downgraded. Claimed or sent loans are left out of the next fetch, and they're skipped before the page limit applies, so older loans can't starve newer ones.
 - **n8n.** HTTP calls and email sends retry 3 times. A reminder email that still fails takes the error output and is written back as `failed` (visible on the loan) rather than stopping the run. Anything else that errors fires the _Error handler_ workflow (logs, plus an email to `LENDLOOP_ALERT_EMAIL`), and failed executions are always saved.
 
 ## 🧪 Testing
@@ -189,15 +191,15 @@ npm run typecheck
 npm run build
 ```
 
-62 tests:
+67 tests:
 
 - **Permissions** (pure policy) and **RBAC through the real Convex functions**: anonymous writes, editing or deleting someone else's tool, approving or returning as borrower, stranger or admin, admin-only functions, admin removal, and what each list returns (no owner data publicly, no emails when signed in).
 - **Loan rules**: double-booking, clashing requests declined on approval, duplicate requests, state transitions.
 - **Signing**: a known HMAC vector, tampering, wrong secret, wrong route, stale and future timestamps, malformed headers.
-- **Automation**: signed minimal payloads, retry then failure then admin retry, overdue endpoint auth and shape, idempotent write-backs, exact-replay rejection.
+- **Automation**: signed minimal payloads, retry then failure then admin retry, overdue endpoint auth and shape, single-winner reminder claims, idempotent write-backs, exact-replay handling, paging past handled loans.
 - **n8n workflows**: the JavaScript inside the exported Code nodes is executed and checked against the Convex signer and verifier, so the two sides can't drift. A further test asserts the exports carry no secrets and route failures to the error workflow.
 
-I also ran the whole loop locally against a local Convex backend, n8n 2.45.7 and Mailpit: request → signed webhook → email to the lender → delivery marked sent; overdue run → reminder email → write-back recorded; a second run sends nothing; an unreachable Convex URL triggers the error workflow.
+I also ran the whole loop locally against a local Convex backend, n8n 2.45.7 and Mailpit: request → signed webhook → email to the lender → delivery marked sent; overdue run → claim → reminder email → write-back recorded; a second run sends nothing; an unreachable Convex URL triggers the error workflow.
 
 Not covered by automated tests: the Clerk sign-in UI itself (tests use simulated Convex identities) and browser-level E2E.
 
@@ -211,6 +213,7 @@ Not covered by automated tests: the Clerk sign-in UI itself (tests use simulated
 - **Dates are UTC calendar days.** Good enough for one neighbourhood.
 - **Only the lender marks a loan returned.** They're the one who knows it's back.
 - **Approving a request declines overlapping pending ones**, and the borrowers are told, so nobody waits on a request that can't happen.
+- **Request notifications are at-least-once.** If n8n sends the email and then crashes before answering, Convex retries and the lender could get a second email. Reminders, which repeat daily and matter more, are claimed first so they're at most once. In production I'd pass the event id to an email provider's idempotency key.
 - **Vitest rather than Jest**, because `convex-test` needs it.
 
 ## 🏭 Running This in Production
