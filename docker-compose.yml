@@ -1,0 +1,38 @@
+# Local automation stack: n8n + Mailpit (catches every email n8n sends,
+# UI on http://localhost:8025). The app itself runs with `npm run dev`.
+services:
+  n8n:
+    image: n8nio/n8n:2.45.7
+    restart: unless-stopped
+    ports:
+      - '5678:5678'
+    env_file: n8n/.env
+    environment:
+      # Code nodes need crypto for HMAC and $env for the shared secrets.
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: 'false'
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+      N8N_SECURE_COOKIE: 'false'
+      EXECUTIONS_DATA_SAVE_ON_ERROR: all
+      EXECUTIONS_DATA_PRUNE: 'true'
+      EXECUTIONS_DATA_MAX_AGE: '336'
+    entrypoint: ['/bin/sh', '/bootstrap/bootstrap.sh']
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+      - ./n8n/docker/bootstrap.sh:/bootstrap/bootstrap.sh:ro
+    extra_hosts:
+      # Lets n8n reach a local Convex backend on the host (port 3211).
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      - mailpit
+
+  mailpit:
+    image: axllent/mailpit:v1.33
+    restart: unless-stopped
+    ports:
+      - '8025:8025'
+      - '1025:1025'
+
+volumes:
+  n8n_data:
