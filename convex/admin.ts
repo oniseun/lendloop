@@ -13,10 +13,15 @@ export const loans = adminQuery({
   args: { status: v.optional(loanStatusValidator) },
   handler: async (ctx, { status }) => {
     const today = todayIso();
-    const all = await ctx.db.query('loans').order('desc').take(200);
+    // Filter through the index before limiting, so older matches aren't
+    // dropped.
     const filtered = status
-      ? all.filter((loan) => loan.status === status)
-      : all;
+      ? await ctx.db
+          .query('loans')
+          .withIndex('by_status_end', (q) => q.eq('status', status))
+          .order('desc')
+          .take(200)
+      : await ctx.db.query('loans').order('desc').take(200);
     return Promise.all(
       filtered.map((loan) => presentLoan(ctx, loan, ctx.user._id, today)),
     );
