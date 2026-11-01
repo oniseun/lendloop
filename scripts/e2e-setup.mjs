@@ -17,9 +17,14 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, appendFileSync } from 'node:fs';
+import {
+  clerkClient,
+  createKeylessApp,
+  ensureConvexJwtTemplate,
+  issuerFromPublishableKey,
+} from './lib/clerk.mjs';
 
 const ENV_FILE = '.env.local';
-const CLERK_API = 'https://api.clerk.com/v1';
 
 const readEnvFile = () => {
   if (!existsSync(ENV_FILE)) return {};
@@ -45,69 +50,26 @@ const saveEnv = (values) => {
 const fileEnv = readEnvFile();
 const env = (name) => process.env[name] || fileEnv[name];
 
-const clerk = async (path, init = {}) => {
-  const response = await fetch(`${CLERK_API}${path}`, {
-    ...init,
-    headers: {
-      authorization: `Bearer ${secretKey}`,
-      'content-type': 'application/json',
-      ...init.headers,
-    },
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(
-      `Clerk ${init.method ?? 'GET'} ${path}: ${response.status}`,
-    );
-    error.body = body;
-    throw error;
-  }
-  return body;
-};
-
 // 1. Keys
 let publishableKey = env('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY');
 let secretKey = env('CLERK_SECRET_KEY');
 if (!publishableKey || !secretKey) {
-  const response = await fetch(`${CLERK_API}/accountless_applications`, {
-    method: 'POST',
-  });
-  if (!response.ok) {
-    throw new Error(`Clerk keyless app creation failed: ${response.status}`);
-  }
-  const app = await response.json();
-  publishableKey = app.publishable_key;
-  secretKey = app.secret_key;
+  const app = await createKeylessApp();
+  publishableKey = app.publishableKey;
+  secretKey = app.secretKey;
   saveEnv({
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: publishableKey,
     CLERK_SECRET_KEY: secretKey,
   });
   console.info('Created a Clerk keyless dev app. Claim it later at:');
-  console.info(`  ${app.claim_url}`);
+  console.info(`  ${app.claimUrl}`);
 }
-const frontendApi = Buffer.from(publishableKey.split('_')[2], 'base64')
-  .toString()
-  .replace(/\$$/, '');
-const issuer = `https://${frontendApi}`;
+const issuer = issuerFromPublishableKey(publishableKey);
+const clerk = clerkClient(secretKey);
 console.info(`Clerk issuer: ${issuer}`);
 
 // 2. JWT template used by ConvexProviderWithClerk
-const templates = await clerk('/jwt_templates');
-if (!templates.some((template) => template.name === 'convex')) {
-  await clerk('/jwt_templates', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: 'convex',
-      lifetime: 60,
-      claims: {
-        aud: 'convex',
-        name: '{{user.full_name}}',
-        given_name: '{{user.first_name}}',
-        email: '{{user.primary_email_address}}',
-        email_verified: '{{user.email_verified}}',
-      },
-    }),
-  });
+if (await ensureConvexJwtTemplate(clerk)) {
   console.info('Created the "convex" JWT template');
 }
 
