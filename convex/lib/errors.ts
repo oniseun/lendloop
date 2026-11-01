@@ -17,10 +17,10 @@ export const ErrorCode = {
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
-export interface AppErrorData {
+export type AppErrorData = {
   code: ErrorCode;
   message: string;
-}
+};
 
 export const appError = (code: ErrorCode, message: string) =>
   new ConvexError<AppErrorData>({ code, message });
