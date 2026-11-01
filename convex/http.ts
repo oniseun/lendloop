@@ -4,42 +4,20 @@ import { httpAction } from './_generated/server';
 import { todayIso } from './lib/dates';
 import { json } from './lib/http';
 import { createLogger } from './lib/logger';
+import { verifyInbound } from './modules/automation/webhook.guard';
 import { parseReminderClaim, parseReminderInput } from './lib/reminderInput';
-import {
-  SIGNATURE_HEADER,
-  TIMESTAMP_HEADER,
-  verifySignature,
-} from './lib/signature';
+import { SIGNATURE_HEADER } from './lib/signature';
 
 const logger = createLogger('http');
 const http = httpRouter();
+
+// HTTP controllers for n8n. Each route: size limit, signature guard,
+// input DTO parse, then one internal function call.
 
 export const OVERDUE_ROUTE = 'GET /api/loans/overdue';
 export const REMINDERS_ROUTE = 'POST /api/automation/reminders';
 export const REMINDER_CLAIM_ROUTE = 'POST /api/automation/reminders/claim';
 const MAX_BODY_BYTES = 4 * 1024;
-
-const verifyInbound = async (request: Request, route: string, body: string) => {
-  const secret = process.env.N8N_TO_CONVEX_SECRET;
-  if (!secret) {
-    logger.error('N8N_TO_CONVEX_SECRET not set', { route });
-    return json(503, { success: false, message: 'NOT_CONFIGURED' });
-  }
-  const result = await verifySignature({
-    secret,
-    signature: request.headers.get(SIGNATURE_HEADER),
-    timestamp: request.headers.get(TIMESTAMP_HEADER),
-    route,
-    body,
-  });
-  if (!result.ok) {
-    logger.warn('signature rejected', { route, reason: result.reason });
-    // Same response for every failure: don't tell a caller which part
-    // of the signature was wrong.
-    return json(401, { success: false, message: 'INVALID_SIGNATURE' });
-  }
-  return null;
-};
 
 http.route({
   path: '/api/loans/overdue',
