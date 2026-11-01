@@ -106,10 +106,22 @@ if (!process.argv.includes('--skip-convex')) {
     ADMIN_EMAILS: 'e2e-admin+clerk_test@example.com',
     E2E_FIXTURES: 'true',
   };
-  for (const [name, value] of Object.entries(convexEnv)) {
-    execFileSync('npx', ['convex', 'env', 'set', name, value], {
-      stdio: 'inherit',
-    });
-  }
+  // `convex dev` may be pushing at the same moment, which makes the
+  // backend reject the write with a concurrency error; retry a few times.
+  const setEnv = (name, value) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        execFileSync('npx', ['convex', 'env', 'set', name, value], {
+          stdio: 'inherit',
+        });
+        return;
+      } catch (error) {
+        if (attempt === 5) throw error;
+        console.info(`Retrying env set for ${name} (${attempt}/5)`);
+        execFileSync('sleep', ['2']);
+      }
+    }
+  };
+  for (const [name, value] of Object.entries(convexEnv)) setEnv(name, value);
 }
 console.info('E2E setup done.');
