@@ -30,6 +30,7 @@ import type * as loans from "../loans.js";
 import type * as model_automation from "../model/automation.js";
 import type * as model_availability from "../model/availability.js";
 import type * as model_loans from "../model/loans.js";
+import type * as seed from "../seed.js";
 import type * as tools from "../tools.js";
 import type * as users from "../users.js";
 
@@ -62,6 +63,7 @@ declare const fullApi: ApiFromModules<{
   "model/automation": typeof model_automation;
   "model/availability": typeof model_availability;
   "model/loans": typeof model_loans;
+  seed: typeof seed;
   tools: typeof tools;
   users: typeof users;
 }>;
