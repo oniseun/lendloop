@@ -1,0 +1,333 @@
+{
+  "id": "lendloopRequestW",
+  "name": "LendLoop – Request notification",
+  "active": false,
+  "nodes": [
+    {
+      "id": "webhook-0001",
+      "name": "Request event webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "5f3c2b7e-1a2d-4c1e-9d55-0d5a1c2e7b01",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop/request-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "code-0002",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Verifies the HMAC signature Convex puts on every request event and\n// drops events this workflow has already handled.\n// Signed string: `${timestamp}.POST /request-events.${rawBody}`\n// Same scheme as convex/lib/signature.ts.\nconst crypto = require('crypto');\n\nconst SECRET = $env.LENDLOOP_CONVEX_TO_N8N_SECRET;\nconst ROUTE = 'POST /request-events';\nconst TOLERANCE_SECONDS = 300;\n\nconst headers = $json.headers || {};\nconst signature = String(headers['x-lendloop-signature'] || '');\nconst timestamp = String(headers['x-lendloop-timestamp'] || '');\n\n// Prefer the raw bytes (Webhook node \"Raw Body\" option). Convex sends\n// compact JSON, so re-serialising the parsed body is an exact fallback.\nlet rawBody = JSON.stringify($json.body);\nconst raw = $input.item.binary && $input.item.binary.data;\nif (raw && raw.data && raw.data !== 'filesystem-v2') {\n  rawBody = Buffer.from(raw.data, 'base64').toString('utf8');\n}\n\nconst reject = (reason) => ({ json: { status: 'invalid', reason } });\n\nif (!SECRET) return reject('NOT_CONFIGURED');\nif (!/^\\d{1,12}$/.test(timestamp)) return reject('INVALID_TIMESTAMP');\nif (Math.abs(Date.now() / 1000 - Number(timestamp)) > TOLERANCE_SECONDS) {\n  return reject('TIMESTAMP_OUT_OF_RANGE');\n}\n\nconst expected =\n  'v1=' +\n  crypto\n    .createHmac('sha256', SECRET)\n    .update(`${timestamp}.${ROUTE}.${rawBody}`)\n    .digest('hex');\nconst a = Buffer.from(expected);\nconst b = Buffer.from(signature);\nif (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {\n  return reject('INVALID_SIGNATURE');\n}\n\nconst event = JSON.parse(rawBody);\nconst processed = $getWorkflowStaticData('global').processedEvents || {};\nif (processed[event.eventId]) {\n  return { json: { status: 'duplicate', eventId: event.eventId } };\n}\nreturn { json: { status: 'ok', event } };\n"
+      }
+    },
+    {
+      "id": "switch-0003",
+      "name": "Route by status",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ { ok: 0, duplicate: 1, invalid: 2 }[$json.status] }}"
+      }
+    },
+    {
+      "id": "code-0004",
+      "name": "Build message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Builds the notification from the minimal event payload. Nothing here\n// needs more than first name, email, tool name and dates.\nconst { event } = $json;\nconst appUrl = $env.LENDLOOP_APP_URL || 'http://localhost:3000';\nconst { firstName } = event.recipient;\nconst tool = event.tool.name;\nconst dates = event.dates.start === event.dates.end\n  ? event.dates.start\n  : `${event.dates.start} to ${event.dates.end}`;\n\nconst copy = {\n  'loan.requested': [\n    `New request for your ${tool}`,\n    `Hi ${firstName}, a neighbour would like to borrow your ${tool} (${dates}). Approve or decline: ${appUrl}/incoming`,\n  ],\n  'loan.cancelled': [\n    `Request for your ${tool} was cancelled`,\n    `Hi ${firstName}, the request to borrow your ${tool} (${dates}) was cancelled. Nothing to do.`,\n  ],\n  'loan.approved': [\n    `Approved: ${tool}`,\n    `Hi ${firstName}, your request to borrow the ${tool} (${dates}) was approved. Details: ${appUrl}/my-requests`,\n  ],\n  'loan.declined': [\n    `Request declined: ${tool}`,\n    `Hi ${firstName}, your request to borrow the ${tool} (${dates}) was declined. Have a look for another on the board: ${appUrl}/tools`,\n  ],\n  'loan.returned': [\n    `Thanks for returning the ${tool}`,\n    `Hi ${firstName}, the ${tool} has been marked as returned. Thanks for looking after it.`,\n  ],\n};\n\nconst message = copy[event.type];\nif (!message) throw new Error(`Unknown event type: ${event.type}`);\n\nreturn {\n  json: {\n    eventId: event.eventId,\n    type: event.type,\n    to: event.recipient.email,\n    subject: message[0],\n    text: message[1],\n  },\n};\n"
+      }
+    },
+    {
+      "id": "if-0005",
+      "name": "Email channel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "84f4e9e2-67af-4f8f-881f-142fdb191c63",
+              "leftValue": "={{ $env.LENDLOOP_NOTIFY_CHANNEL }}",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "email-0006",
+      "name": "Send email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        60
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "fromEmail": "={{ $env.LENDLOOP_EMAIL_FROM }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "lendloopSmtpCred",
+          "name": "LendLoop SMTP"
+        }
+      }
+    },
+    {
+      "id": "code-0007",
+      "name": "Mock notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        260
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Mock channel: logs the notification instead of sending it. The email\n// address is masked so the n8n log never holds full PII.\nconst masked = $json.to.replace(/^(.).*(@.*)$/, '$1***$2');\nconsole.log(`[lendloop] ${$json.type} -> ${masked}: ${$json.subject}`);\nreturn { json: { eventId: $json.eventId, channel: 'mock', to: masked } };\n"
+      }
+    },
+    {
+      "id": "code-0008",
+      "name": "Mark processed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Only now is the event marked as handled, so a failed send is retried\n// by Convex (same eventId) instead of being swallowed as a duplicate.\nconst eventId = $('Build message').item.json.eventId;\nconst data = $getWorkflowStaticData('global');\nconst processed = data.processedEvents || {};\nconst weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;\nfor (const [key, at] of Object.entries(processed)) {\n  if (at < weekAgo) delete processed[key];\n}\nprocessed[eventId] = Date.now();\ndata.processedEvents = processed;\nreturn { json: { ok: true, eventId } };\n"
+      }
+    },
+    {
+      "id": "respond-0009",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        160
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"ok\":true}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "respond-0010",
+      "name": "Respond duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        340
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"ok\":true,\"duplicate\":true}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "respond-0011",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"ok\":false}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Request event webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Route by status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by status": {
+      "main": [
+        [
+          {
+            "node": "Build message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build message": {
+      "main": [
+        [
+          {
+            "node": "Email channel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email channel?": {
+      "main": [
+        [
+          {
+            "node": "Send email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mock notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email": {
+      "main": [
+        [
+          {
+            "node": "Mark processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock notification": {
+      "main": [
+        [
+          {
+            "node": "Mark processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark processed": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "lendloopErrorWf1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

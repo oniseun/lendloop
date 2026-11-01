@@ -1,0 +1,148 @@
+{
+  "id": "lendloopErrorWf1",
+  "name": "LendLoop – Error handler",
+  "active": false,
+  "nodes": [
+    {
+      "id": "errortrigger-0026",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "code-0027",
+      "name": "Format and log alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Error workflows get the failing node and message. We forward only\n// that plus the execution link: no item data, so no PII in alerts.\nconst { execution = {}, workflow = {} } = $json;\nconst alert = {\n  workflow: workflow.name || 'unknown',\n  node: (execution.lastNodeExecuted) || 'unknown',\n  error: (execution.error && execution.error.message) || 'unknown error',\n  executionUrl: execution.url || null,\n  at: new Date().toISOString(),\n};\nconsole.error('[lendloop] workflow failed', JSON.stringify(alert));\nreturn {\n  json: {\n    ...alert,\n    to: $env.LENDLOOP_ALERT_EMAIL || '',\n    subject: `[LendLoop] ${alert.workflow} failed at \"${alert.node}\"`,\n    text: `${alert.error}\\n\\nExecution: ${alert.executionUrl || 'n/a'}\\nAt: ${alert.at}`,\n  },\n};\n"
+      }
+    },
+    {
+      "id": "if-0025",
+      "name": "Alert by email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "460bc8ab-0a50-4d7e-bbd3-661d18bf66e0",
+              "leftValue": "={{ $env.LENDLOOP_NOTIFY_CHANNEL }}",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "a916f9fa-d853-4a76-9f7e-60077e343706",
+              "leftValue": "={{ $env.LENDLOOP_ALERT_EMAIL }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "email-0028",
+      "name": "Email alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        660,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "fromEmail": "={{ $env.LENDLOOP_EMAIL_FROM }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "lendloopSmtpCred",
+          "name": "LendLoop SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Format and log alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format and log alert": {
+      "main": [
+        [
+          {
+            "node": "Alert by email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert by email?": {
+      "main": [
+        [
+          {
+            "node": "Email alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
