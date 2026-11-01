@@ -108,19 +108,21 @@ if (quick) {
 }
 
 step('Overdue workflow (n8n -> Convex -> Mailpit)');
-compose(
-  'exec',
-  '-T',
-  '-e',
-  'N8N_PORT=5679',
-  '-e',
-  'N8N_RUNNERS_BROKER_PORT=5680',
-  'n8n',
-  'n8n',
-  'execute',
-  '--id',
-  'lendloopOverdueW',
-);
+// Same command a reviewer can run by hand; the secrets come from the
+// shared volume because `docker compose exec` skips the bootstrap script.
+try {
+  compose(
+    'exec',
+    '-T',
+    'n8n',
+    'sh',
+    '-c',
+    'set -a && . /shared/n8n.env && set +a && ' +
+      'N8N_PORT=5679 N8N_RUNNERS_BROKER_PORT=5680 n8n execute --id lendloopOverdueW',
+  );
+} catch (error) {
+  fail(`n8n execute failed:\n${String(error.stdout).slice(-2000)}`);
+}
 const reminder = await waitForEmail(
   'subject:"Reminder: please return the Cordless drill (18V)"',
 );
